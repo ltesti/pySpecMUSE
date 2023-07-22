@@ -8,8 +8,7 @@ from astropy.io import fits
 #import os
 #from astropy.table import Table
 
-#from .utils import resamp_spec, nrefrac
-
+from .myphotutils import get_centroids
 
 class CubeMUSE(object):
     """
@@ -31,6 +30,7 @@ class CubeMUSE(object):
                   'file' : 'DATA_Long6.fits',
                   'file_i_image' : 'WFM_Tr14_long_6_Cousins_I_IMAGE_FOV.fits',
                   'file_v_image' : 'WFM_Tr14_long_6_Johnson_V_IMAGE_FOV.fits',
+                  'file_pos' : 'i.dat'
                   }
         """
 
@@ -41,17 +41,6 @@ class CubeMUSE(object):
 
         self.params = parameters
 
-        try:
-
-
-        default_parameters = {'code': '6',
-                              'datadir': '/users/ltesti/Desktop/GDrive-INAF/ColabDataTesiGiuseppe/F6/',
-                              'default_names': False,
-                              'file': 'DATA_Long6.fits',
-                              'file_i_image': 'WFM_Tr14_long_6_Cousins_I_IMAGE_FOV.fits',
-                              'file_v_image': 'WFM_Tr14_long_6_Johnson_V_IMAGE_FOV.fits',
-                              }
-
         try :
             self.pointing_code = self.params['code']
             self.datadir = self.params['datadir']
@@ -59,6 +48,8 @@ class CubeMUSE(object):
 
             self.set_parameters()
             self.set_wavelength()
+
+            self.set_centroids()
 
         except KeyError:
             raise ValueError("Cannot initiate analysis without default values for pointing_code, datadir, and default_names switch\n {}".format(self.params))
@@ -83,7 +74,7 @@ class CubeMUSE(object):
 
     def set_wavelength(self,verbose=True):
         #
-        hdul = fits.open(datacube)
+        hdul = fits.open(self.file)
         hdul.info()
         new = hdul['DATA']
         # Setting the wavelength vector
@@ -97,3 +88,11 @@ class CubeMUSE(object):
         self.wl = (self.cube_Nwl - self.cube_crpix + 1) * self.cube_cdelt + self.cube_crval
         if verbose:
             print("Cube wavelength axis definition: CDELT:{0}, CRVAL={1}, CRPIX={2}\n".format(self.cube_cdelt, self.cube_crval, self.cube_crpix))
+
+    def set_centroids(self):
+        #
+        if 'file_pos' in self.params.keys():
+            self.file_pos = self.params['file_pos']
+            sources.to_pandas().to_csv(self.datadir+self.file_pos)
+        else:
+            self.positions_i = get_centroids(self.file_i_image)
