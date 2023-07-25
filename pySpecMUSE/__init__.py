@@ -16,6 +16,6 @@ import matplotlib
 if matplotlib.get_backend().lower() == 'macosx':
     matplotlib.use('TkAgg')
 
-from .myphotutils import get_centroids
+from .myphotutils import get_centroids, get_stars_for_apc
 from .aperturesplots import plotstars
 from .CubeMUSE import CubeMUSE

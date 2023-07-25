@@ -8,7 +8,7 @@ from astropy.io import fits
 #import os
 #from astropy.table import Table
 
-from .myphotutils import get_centroids
+from .myphotutils import get_centroids, get_stars_for_apc
 
 class CubeMUSE(object):
     """
@@ -71,6 +71,10 @@ class CubeMUSE(object):
                 raise ValueError(
                     "When default_names is set to False then the input parameters set has to include 'file', "
                     "'file_i_image', and 'file_v_image' keywords\n")
+        if 'figdir' in self.params.keys():
+            self.figdir = self.params['figdir']
+        else:
+            self.figdir = self.datadir
 
     def set_wavelength(self,verbose=True):
         #
@@ -95,4 +99,14 @@ class CubeMUSE(object):
             self.file_pos = self.params['file_pos']
             sources.to_pandas().to_csv(self.datadir+self.file_pos)
         else:
-            self.positions_i = get_centroids(self.file_i_image)
+            self.positions_i, self.sources_i = get_centroids(self.file_i_image)
+
+    def set_stars_for_apc(self, mindist=10, magsat=-8, magperc=8,
+                          doplo=True, image=None, plotfile='f_stars_for_apc.pdf'):
+        #
+        if not image:
+            image = self.file_i_image
+        plotfile = self.figdir+plotfile
+        self.n_apc = get_stars_for_apc(self.sources_i,
+                                       mindist=mindist, magsat=magsat, magperc=magperc,
+                                       doplo=doplo, image=image, plotfile=plotfile)
