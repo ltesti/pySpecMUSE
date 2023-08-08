@@ -57,7 +57,7 @@ def get_stars_for_apc(starlis, mindist=10, magsat=-8, magperc=5, doplo=False, im
             plotstars(image, xy,
                       aprad=mindist, fileout=plotfile, mytitle='Aperture Correction Stars')
         else:
-            printf("ERROR: to plot the results, you need to pass also the image name image='filename'")
+            print("ERROR: to plot the results, you need to pass also the image name image='filename'")
     #
     return n_apc
 

@@ -3,8 +3,10 @@
 # coding=utf-8
 from setuptools import setup
 
+from pySpecMUSE._version import __version__
+
 # read version number
-exec(open("pySpecMUSE/_version.py", "r").read())
+# exec(open("pySpecMUSE/_version.py", "r").read())
 
 # use README as long_description (for PyPI)
 try:

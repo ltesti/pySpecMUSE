@@ -5,15 +5,16 @@ import numpy as np
 import multiprocessing as mp
 from astropy.io import fits
 from astropy.wcs import WCS
-#from photutils.aperture import CircularAperture, CircularAnnulus
-#import scipy.interpolate as ssi
-import matplotlib.pyplot as plt
-#import os
-#from astropy.table import Table
+# import pandas as pd
+# from photutils.aperture import CircularAperture, CircularAnnulus
+# import scipy.interpolate as ssi
+# import matplotlib.pyplot as plt
+# import os
+from astropy.table import Table
 
 from .myphotutils import get_centroids, get_stars_for_apc, runphot_ima_aps, apc_spec_single_wl
 from .apc_plots import plot_curve_of_growth_iv, plot_apc
-from .utils import running_median_spec
+# from .utils import running_median_spec
 from .StarMUSE import StarMUSE, apc_calc_single_star
 
 
@@ -29,9 +30,11 @@ class CubeMUSE(object):
             'file' : name of input cube file (required if default_names is False)'
             'file_i_image' : name of I band image computed by the MUSE pipeline
             'file_v_image' : name of V band image computed by the MUSE pipeline
+            'nproc' : maximum number of processes to spawn for multiprocessing computations
 
         Example:
             pars={'code' : '6',
+                  'nproc' : 8,
                   'datadir' : '/users/ltesti/Desktop/GDrive-INAF/ColabDataTesiGiuseppe/F6/',
                   'default_names' : False,
                   'file' : 'DATA_Long6.fits',
@@ -133,6 +136,12 @@ class CubeMUSE(object):
             print("Cube wavelength axis definition: CDELT:{0}, CRVAL={1}, CRPIX={2}\n".format(self.cube_cdelt3, self.cube_crval3, self.cube_crpix3))
 
     def set_starlis(self):
+        """
+        This function creates the list of stars objects starting from the stellar positons created
+        by the set_centroids() method
+
+        :return: void
+        """
         #
         if not self.has_centroids:
             self.set_centroids()
@@ -153,10 +162,16 @@ class CubeMUSE(object):
         self.nstars = istar
 
     def set_centroids(self):
+        """
+        Function to read or find the stellar positions.
+        Uses the get_centroids function in myphotutils.py to call the daofind algorithm
+
+        :return: void
+        """
         #
         if 'file_pos' in self.params.keys():
             self.file_pos = self.params['file_pos']
-            sources.to_pandas().to_csv(self.datadir+self.file_pos)
+            self.sources_i = Table.read(self.datadir+self.file_pos,format='csv')
         else:
             self.positions_i, self.sources_i = get_centroids(self.file_i_image)
         #
@@ -164,6 +179,17 @@ class CubeMUSE(object):
 
     def set_stars_for_apc(self, mindist=10, magsat=-8, magperc=8,
                           doplo=True, image=None, plotfile='f_stars_for_apc.pdf'):
+        """
+        Function to identify the APC stars in the field.
+
+        :param mindist: (float) minimum distance (in pixels) to consider star as isolated
+        :param magsat: (float) minimum magnitude below which a star is considered to be saturated
+        :param magperc: (float) percentile to select th ebrightest stars in the field
+        :param doplo: (bool) if True prepare a diagnostic plot
+        :param image: (fits file name) if set uses this as background image, otherwise the I band is used
+        :param plotfile: (string) file for the figure
+        :return: void
+        """
         #
         if not image:
             image = self.file_i_image
@@ -177,6 +203,18 @@ class CubeMUSE(object):
         self.has_apc_stars = True
 
     def curve_of_growth_iv(self,radii=np.arange(1,10,0.5),skyrad=(10,15), guessrad=3., doplo_iv=True, plotfile='f_curve_of_growth_iv.pdf'):
+        """
+        This function computes the curve of growth in the I and V band, to help identify the best apertures for
+        spectrophotometry. Optionally plots a diagnostic figure.
+        If not set, it identifies the apc stars (with default parameters and no diagnostic plot)
+
+        :param radii: (float array) array of radii for the photometry curve of growth
+        :param skyrad: (tuple) inner and outer radius for the sky annulus
+        :param guessrad: (float) guess at the best radius (for plotting purposes)
+        :param doplo_iv: (bool) if True do the diagnostic plot
+        :param plotfile: (string) name of the figure file
+        :return: void
+        """
         #
         plotfile = self.figdir + plotfile
         if not self.has_apc_stars:
@@ -192,15 +230,6 @@ class CubeMUSE(object):
         data_v = ima_v['DATA'].data
         ima_v.close()
         #
-        # self.cog_mag_i = runphot_ima_aps([self.stars[i] for i in self.n_apc], self.cog_radii,
-        #                                  self.cog_skyrad[0], self.cog_skyrad[1], data_i)
-        # self.cog_mag_v = runphot_ima_aps([self.stars[i] for i in self.n_apc], self.cog_radii,
-        #                                  self.cog_skyrad[0], self.cog_skyrad[1], data_v)
-        #
-        # if doplo_iv:
-        #     plot_curve_of_growth_iv(self.cog_radii, self.cog_mag_i, self.cog_mag_v,
-        #                             [self.stars[i] for i in self.n_apc], self.file_i_image, self.file_v_image,
-        #                             guessrad=guessrad, plotfile=plotfile)
         self.cog_mag_i = runphot_ima_aps(self.positions_i[self.n_apc], self.cog_radii,
                                          self.cog_skyrad[0], self.cog_skyrad[1], data_i)
         self.cog_mag_v = runphot_ima_aps(self.positions_i[self.n_apc], self.cog_radii,
@@ -217,6 +246,21 @@ class CubeMUSE(object):
 
     def set_apc_values(self,radii=(3.,10.),skyrad=(10,15), hw_box_median=30, sclip_median=2.0,
                        apc_sclip=3.0, doplo_apc=True, plotfile='f_apc_values.pdf'):
+        """
+        This funcion is used to compute the aperture correction as a function of wavelength.
+        If not done already, first identifies the stars to be used for apc (using default parameters),
+        then computes apc(wl) for each of them, computes median apc with sigma clips and combines
+        all apc stars, produces a standard diagnostic plot.
+
+        :param radii: (tuple) the two photometry apertures radii used to compute the aperture correction
+        :param skyrad: (tuple) the inner and outer radius for the sky annulus
+        :param hw_box_median: (int) half width of the box used for running median
+        :param sclip_median: (float) number of sigma for the sigma clipping for median computation
+        :param apc_sclip: (float) number of sigma for the sigma clipping in combining different stars
+        :param doplo_apc: (bool) if Ture prepare a diagnostic plot
+        :param plotfile: (string) name of the figure file
+        :return: void
+        """
         #
         plotfile = self.figdir + plotfile
 
@@ -270,6 +314,13 @@ class CubeMUSE(object):
             plot_apc(self.wl, self.apc_cube, self.apc_med, self.apc_mean, self.apc_std, self.apc_med_30, nsig=apc_sclip, plotfile=plotfile)
 
     def _run_getspecapc_proc_mp(self):
+        """
+        This function is used to setup the multiprocessing extraction of the spectra for the aperture
+        correction stars. It calls a wrapper function in myphotutils.py that executes the call to
+        the apphot function.
+
+        :return:
+        """
         #
         #
         if self.nproc:   # run with multiprocessing
@@ -291,6 +342,13 @@ class CubeMUSE(object):
                                                               self.apc_skyrad, self.cube_data[iwl,:,:]])
 
     def _run_apc_proc_mp(self, my_star_method_args):
+        """
+        This function is used to setup the multiprocessing computation of the mean, median and std
+        of the spectra for the aperture correction stars. It calls a wrapper function in StarMUSE.py that executes
+        the call to the utils function.
+
+        :return:
+        """
         #
         if self.nproc:   # run with multiprocessing
             nproc = min(len(self.n_apc),self.nproc)

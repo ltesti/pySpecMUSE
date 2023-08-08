@@ -2,16 +2,16 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-import multiprocessing as mp
-from astropy.io import fits
-#from photutils.aperture import CircularAperture, CircularAnnulus
-#import scipy.interpolate as ssi
-import matplotlib.pyplot as plt
-#import os
-#from astropy.table import Table
+# import multiprocessing as mp
+# from astropy.io import fits
+# from photutils.aperture import CircularAperture, CircularAnnulus
+# import scipy.interpolate as ssi
+# import matplotlib.pyplot as plt
+# import os
+# from astropy.table import Table
 
-from .myphotutils import get_centroids, get_stars_for_apc, runphot_ima_aps
-from .apc_plots import plot_curve_of_growth_iv, plot_apc
+# from .myphotutils import get_centroids, get_stars_for_apc, runphot_ima_aps
+# from .apc_plots import plot_curve_of_growth_iv, plot_apc
 from .utils import running_median_spec
 
 def apc_calc_single_star(args):
@@ -74,4 +74,19 @@ class StarMUSE(object):
         except KeyError:
             raise ValueError("Cannot initiate analysis without default values for pointing_code, datadir, and default_names switch\n {}".format(self.starpars))
 
+        # Aperture correction star attributes
         self.apc_star = False
+        self.cog_mag_i = None
+        self.cog_mag_v = None
+        self.cog_radii = None
+        self.apc_spec = None
+        self.apc_wl = None
+        self.apc_radii = None
+        self.apc_med = None
+        self.apc_mean = None
+        self.apc_std = None
+
+        # Spectrum attributes
+        self.has_spectrum = False
+        self.wl = None
+        self.flux = None
