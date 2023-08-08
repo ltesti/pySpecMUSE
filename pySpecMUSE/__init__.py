@@ -16,6 +16,9 @@ import matplotlib
 if matplotlib.get_backend().lower() == 'macosx':
     matplotlib.use('TkAgg')
 
-from .myphotutils import get_centroids, get_stars_for_apc
+from .myphotutils import get_centroids, get_stars_for_apc, runphot_ima_aps, do_apphot, apc_spec_single_wl
+from .apc_plots import plot_curve_of_growth_iv, plot_apc
 from .aperturesplots import plotstars
+from .utils import running_median_spec
 from .CubeMUSE import CubeMUSE
+from .StarMUSE import StarMUSE

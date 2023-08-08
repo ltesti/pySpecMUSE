@@ -3,8 +3,9 @@
 
 import numpy as np
 from astropy.io import fits
-from astropy.stats import sigma_clipped_stats
+from astropy.stats import sigma_clipped_stats, SigmaClip
 from photutils.detection import DAOStarFinder
+from photutils.aperture import CircularAperture, CircularAnnulus, ApertureStats
 
 from .aperturesplots import plotstars
 
@@ -23,38 +24,90 @@ def get_centroids(imagefile, verbose=True, sigma=5.0, fwhm=4.5, thres=1., sigma_
     #
     return np.transpose((sources['xcentroid'], sources['ycentroid'])), sources
 
-def get_stars_for_apc(sources, mindist=10, magsat=-8, magperc=5, doplo=False, image=None, plotfile='f_stars_for_apc.pdf'):
+def get_stars_for_apc(starlis, mindist=10, magsat=-8, magperc=5, doplo=False, image=None, plotfile='f_stars_for_apc.pdf'):
     #
-    maxx = np.max(np.array(sources['xcentroid']))
-    maxy = np.max(np.array(sources['ycentroid']))
-    dist2 = np.ones(len(sources)) * maxx * maxy
-    for i in range(len(sources)):
-        for j in range(len(sources)):
-            if j != i:
-                dx2 = ((sources['xcentroid'])[i] - (sources['xcentroid'])[j]) ** 2
-                dy2 = ((sources['ycentroid'])[i] - (sources['ycentroid'])[j]) ** 2
-                d2 = dx2 + dy2
-                if d2 < dist2[i]:
-                    dist2[i] = d2
+    maxx = np.max(np.array([s.xcentroid for s in starlis]))
+    maxy = np.max(np.array([s.ycentroid for s in starlis]))
+    allmags = np.array([s.daofind_mag for s in starlis])
+    mindist2 = mindist*mindist
+    n_apc = []
+    for i in range(len(starlis)):
+        s1 = starlis[i]
+        isolated = True
+        for s2 in starlis:
+            if s2.id != s1.id:
+                dx2 = (s1.xcentroid - s2.xcentroid) ** 2
+                dy2 = (s1.ycentroid - s2.ycentroid) ** 2
+                if (dx2+dy2) < mindist2:
+                    isolated = False
+        if (isolated & (s1.xcentroid >= mindist) &
+            (s1.xcentroid <= maxx-mindist) &
+            (s1.ycentroid >= mindist) &
+            (s1.ycentroid <= maxy-mindist) &
+            (s1.daofind_mag <= np.percentile(allmags, magperc)) &
+            (s1.daofind_mag >= magsat)) :
+                s1.apc_star = True
+                n_apc.append(i)
+
     #
-    dist = np.sqrt(dist2)
-    #
-    # select stars that have neibours farther than mindist, ara at least mindist from the edges,
-    #  and havemagnitues in the specified percentiles, but below saturation
-    n_apc = np.where( (dist >= mindist) &
-                      (sources['xcentroid'] >= mindist) &
-                      (sources['xcentroid'] <= maxx-mindist) &
-                      (sources['ycentroid'] >= mindist) &
-                      (sources['ycentroid'] <= maxy-mindist) &
-                      (sources['mag'] <= np.percentile(sources['mag'],magperc)) &
-                      (sources['mag'] >= magsat)
-                      )
     #
     if doplo:
         if image:
-            plotstars(image, np.transpose(((sources[n_apc])['xcentroid'], (sources[n_apc])['ycentroid'])),
+            xy = np.transpose(([starlis[i].xcentroid for i in n_apc], [starlis[i].ycentroid for i in n_apc]))
+            plotstars(image, xy,
                       aprad=mindist, fileout=plotfile, mytitle='Aperture Correction Stars')
         else:
             printf("ERROR: to plot the results, you need to pass also the image name image='filename'")
     #
     return n_apc
+
+def do_apphot(in_ima, in_aper, in_annulus):
+
+    ### Perform Aperture Photometry
+    sigclip = SigmaClip(sigma=3.0, maxiters=10)
+    aper_stats = ApertureStats(in_ima, in_aper, sigma_clip=None, sum_method='subpixel')
+    bkg_stats = ApertureStats(in_ima, in_annulus, sigma_clip=sigclip, sum_method='subpixel')
+
+    ### Extimate the bkg dubctracted flux
+    total_bkg = bkg_stats.median * aper_stats.sum_aper_area.value
+    apersum_bkgsub = aper_stats.sum - total_bkg
+    #print(apersum_bkgsub)
+    mag=apersum_bkgsub * 0
+    for elem in range(len(apersum_bkgsub)):
+        if apersum_bkgsub[elem] > 0:
+            mag[elem] = -2.5 * np.log10(apersum_bkgsub[elem]) + 25
+        else:
+            mag[elem] = 99.999
+    return mag
+
+def runphot_ima_aps(positions, radii, sky_r1, sky_r2, data):
+    apertures = []
+    for i in range(len(radii)):
+        apertures.append(CircularAperture(positions, r=radii[i]))
+    annulus_aperture = CircularAnnulus(positions, r_in=sky_r1, r_out=sky_r2)
+    #
+    mag = []
+    for ap in apertures:
+        mag.append(do_apphot(data, ap, annulus_aperture))
+    return mag
+
+def apc_spec_single_wl(args):
+    # wrapper to get the apc spectra for apc_stars
+    phot_for_apcorr = runphot_ima_aps(args[0], args[1],
+                                      (args[2])[0], (args[2])[1],
+                                      args[3])
+    return np.array(phot_for_apcorr[1] - phot_for_apcorr[0])
+
+def get_spec_single_wl(args):
+    # wrapper to extract spectra with apc applied
+    # args = list containing the following:
+    #      0 = positions (stellar positions for the photometry)
+    #      1 = radii (assumed to contain only one radius, in any case only the first radius is returned)
+    #      2 = skyrad (list of two)
+    #      3 = cube_data[iwl,:,:]  (image at the selected wavelength)
+    #      4 = apc_iwl (aperture correction)
+    phot_for_apcorr = runphot_ima_aps(args[0], args[1],
+                                      (args[2])[0], (args[2])[1],
+                                      args[3])
+    return np.array(phot_for_apcorr[0] + args[4])
+
