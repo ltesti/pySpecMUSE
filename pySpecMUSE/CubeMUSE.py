@@ -362,5 +362,5 @@ class CubeMUSE(object):
             for mystar in self.apc_stars:
                 mystar = apc_calc_single_star([mystar, my_star_method_args])
 
-    def extract_spectra(self):
+    def extract_spectra(self, add_apc=True):
         pass
