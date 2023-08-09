@@ -19,7 +19,8 @@ from .StarMUSE import StarMUSE, apc_calc_single_star
 
 
 class CubeMUSE(object):
-    """
+    """The MUSE pointing
+
         The class stores the parameters for a MUSE pointing
 
         params:
@@ -81,6 +82,13 @@ class CubeMUSE(object):
             raise ValueError("Cannot initiate analysis without default values for pointing_code, datadir, and default_names switch\n {}".format(self.params))
 
     def set_parameters(self):
+        """Function to set/read the optional parameters
+
+        This function sets up default parameters that can be modified if the input dictionary contains the
+        appropriate keywords.
+
+        :return: void
+        """
         #
         # function to set the optional parameters
         #
@@ -103,11 +111,14 @@ class CubeMUSE(object):
             self.figdir = self.datadir
 
     def set_cubewcs(self,verbose=True):
+        """Reads the Cube and the WCS
+        """
         #
         hdul = fits.open(self.file)
         hdul.info()
         new = hdul['DATA']
         hdul.close()
+        self.cube_data = hdul['DATA'].data
         # Setting the wavelength vector
         # new.header
         self.cube_cd11 = new.header['CD1_1']
@@ -136,7 +147,8 @@ class CubeMUSE(object):
             print("Cube wavelength axis definition: CDELT:{0}, CRVAL={1}, CRPIX={2}\n".format(self.cube_cdelt3, self.cube_crval3, self.cube_crpix3))
 
     def set_starlis(self):
-        """
+        """Setup the list of StarMUSE objects
+
         This function creates the list of stars objects starting from the stellar positons created
         by the set_centroids() method
 
@@ -162,7 +174,8 @@ class CubeMUSE(object):
         self.nstars = istar
 
     def set_centroids(self):
-        """
+        """Set the centroids values
+
         Function to read or find the stellar positions.
         Uses the get_centroids function in myphotutils.py to call the daofind algorithm
 
@@ -179,7 +192,8 @@ class CubeMUSE(object):
 
     def set_stars_for_apc(self, mindist=10, magsat=-8, magperc=8,
                           doplo=True, image=None, plotfile='f_stars_for_apc.pdf'):
-        """
+        """Select ApC stars
+
         Function to identify the APC stars in the field.
 
         :param mindist: (float) minimum distance (in pixels) to consider star as isolated
@@ -246,7 +260,8 @@ class CubeMUSE(object):
 
     def set_apc_values(self,radii=(3.,10.),skyrad=(10,15), hw_box_median=30, sclip_median=2.0,
                        apc_sclip=3.0, doplo_apc=True, plotfile='f_apc_values.pdf'):
-        """
+        """Computes the ApC values as a function of wavelength
+
         This funcion is used to compute the aperture correction as a function of wavelength.
         If not done already, first identifies the stars to be used for apc (using default parameters),
         then computes apc(wl) for each of them, computes median apc with sigma clips and combines
@@ -270,11 +285,6 @@ class CubeMUSE(object):
         self.apc_skyrad = skyrad
 
         #
-        #
-        hdul = fits.open(self.file)
-        hdul.info()
-        self.cube_data = hdul['DATA'].data
-        hdul.close()
         #
         self.apc_cube = np.zeros((len(self.wl),len(self.n_apc)))
 
@@ -314,12 +324,13 @@ class CubeMUSE(object):
             plot_apc(self.wl, self.apc_cube, self.apc_med, self.apc_mean, self.apc_std, self.apc_med_30, nsig=apc_sclip, plotfile=plotfile)
 
     def _run_getspecapc_proc_mp(self):
-        """
+        """Extracts the APC spectra
+
         This function is used to setup the multiprocessing extraction of the spectra for the aperture
         correction stars. It calls a wrapper function in myphotutils.py that executes the call to
         the apphot function.
 
-        :return:
+        :return: void
         """
         #
         #
@@ -342,7 +353,8 @@ class CubeMUSE(object):
                                                               self.apc_skyrad, self.cube_data[iwl,:,:]])
 
     def _run_apc_proc_mp(self, my_star_method_args):
-        """
+        """Execute ApC spectra processing
+
         This function is used to setup the multiprocessing computation of the mean, median and std
         of the spectra for the aperture correction stars. It calls a wrapper function in StarMUSE.py that executes
         the call to the utils function.
