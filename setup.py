@@ -3,14 +3,13 @@
 # coding=utf-8
 from setuptools import setup
 
-# from pySpecMUSE._version import __version__
+from pySpecMUSE._version import __version__
 
-# read version number
-exec(open("pySpecMUSE/_version.py", "r").read())
+# read version number# exec(open("pySpecMUSE/_version.py", "r").read())
 
 # use README as long_description (for PyPI)
 try:
-    long_description = open("README.rst", "r", encoding="utf-8").read()
+    long_description = open("README", "r", encoding="utf-8").read()
 except TypeError:
     # under Python 2.7 the `encoding` keyword doesn't exist.
     print(
@@ -19,7 +18,7 @@ except TypeError:
         "This software may not work as intended (or not work at all). "
         "This software was developed to work with python 3.9"
     )
-    long_description = open("README.rst", "r").read()
+    long_description = open("README", "r").read()
 
 
 setup(
@@ -36,7 +35,7 @@ setup(
     download_url="https://github.com/ltesti/pySpecMUSE/archive/{}.tar.gz".format(
         __version__
     ),
-    keywords=["science", "astronomy", "optical spectroscopy","integral field spectroscopy"],
+    keywords=["science", "astronomy", "optical spectroscopy", "integral field spectroscopy"],
     classifiers=[
         "Development Status :: 0 - Under Development/Unstable",
         "Intended Audience :: Developers",
