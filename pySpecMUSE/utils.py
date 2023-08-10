@@ -4,7 +4,7 @@
 import numpy as np
 
 # Compute running median for the spectrum
-def running_median_spec(sp, hw_box, sclip=2.0):
+def running_median_spec(sp, hw_box, sclip=2.0, maxiter=2):
     #
     # initialize vectors
     npt = len(sp)
@@ -36,19 +36,15 @@ def running_median_spec(sp, hw_box, sclip=2.0):
         #
         # if sclip is defined, then proceed with the iterative clipping
         if sclip:
-            iter = True
+            iter = 0
             s2 = (sclip*std)**2
-            nold = npt
-            while (iter):
+            while (iter<maxiter):
                 nn = np.where((a-mid)**2 <= s2)
-                nnew = len(nn[0])
                 mid = np.nanmedian(a[nn])
                 mean = np.nanmean(a[nn])
                 std = np.nanstd(a[nn])
                 s2 = (sclip*std)**2
-                if nnew >= nold:
-                    iter = False
-                nold = nnew
+                iter+=1
             #
             # assign value
             myrms[i] = std
@@ -56,5 +52,5 @@ def running_median_spec(sp, hw_box, sclip=2.0):
             mymed[i] = mid
     #
     # return vector
-    return mymed, mymean, myrms
+    return [mymed, mymean, myrms]
 

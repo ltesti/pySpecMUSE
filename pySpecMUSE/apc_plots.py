@@ -63,7 +63,7 @@ def plot_curve_of_growth_iv(radii, mag_i, mag_v, positions, file_i, file_v, gues
     if plotfile:
         plt.savefig(plotfile)
 
-def plot_apc(wl, apc_cube, apc_med, apc_mean, apc_std, apc_med_30, nsig=None, plotfile=None):
+def plot_apc(wl, apc_cube, apc_med, apc_mean, apc_std, apc_med_30, apc_fit, nsig=None, plotfile=None):
 
     fig, ax = plt.subplots(figsize=(20, 7))
 
@@ -79,13 +79,18 @@ def plot_apc(wl, apc_cube, apc_med, apc_mean, apc_std, apc_med_30, nsig=None, pl
     ymin = np.percentile(apc_med_30, 0.1)
     ymax = np.percentile(apc_med_30, 99.9)
     ax.set_ylim(ymin, ymax)
-    ax.plot(wl, apc_mean, alpha=0.4, color='cyan')
+
     ax.fill_between(wl, apc_med-nsigma*apc_std, apc_med+nsigma*apc_std, alpha=0.25, color='blue')
     #
     ax.plot(wl, apc_cube[:, 0], alpha=0.4, color='orange')
     ax.plot(wl, np.nanmedian(apc_cube[:, 0]) * np.ones(len(wl)), color='green')
     #axs[0].plot(wl, -apcorrmean * np.ones(len(wl)))
-    ax.plot(wl, apc_med_30, 'o', color='red')
+    ax.plot(wl, apc_med_30, 'o', color='red', alpha=0.3)
+    ax.plot(wl, apc_mean, linestyle='solid', alpha=0.4, color='cyan')
+    ax.plot(wl, apc_med, linestyle='dashed', alpha=0.4, color='cyan')
+    ax.plot(wl, apc_fit(wl), linestyle='dashed', linewidth=3, color='yellow')
+    ax.set_xlabel('Wavelength')
+    ax.set_ylabel('Aperture Correction')
 
     if plotfile:
         plt.savefig(plotfile)

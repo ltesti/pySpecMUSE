@@ -5,14 +5,15 @@ import numpy as np
 import multiprocessing as mp
 from astropy.io import fits
 from astropy.wcs import WCS
+from astropy.coordinates import SkyCoord
 # import pandas as pd
 # from photutils.aperture import CircularAperture, CircularAnnulus
 # import scipy.interpolate as ssi
 # import matplotlib.pyplot as plt
-# import os
+import os
 from astropy.table import Table
 
-from .myphotutils import get_centroids, get_stars_for_apc, runphot_ima_aps, apc_spec_single_wl
+from .myphotutils import get_centroids, get_stars_for_apc, runphot_ima_aps, apc_spec_single_wl, get_spec_single_wl
 from .apc_plots import plot_curve_of_growth_iv, plot_apc
 # from .utils import running_median_spec
 from .StarMUSE import StarMUSE, apc_calc_single_star
@@ -114,11 +115,19 @@ class CubeMUSE(object):
         """Reads the Cube and the WCS
         """
         #
+        ima_i = fits.open(self.file_i_image)  # datadir+'WFM_Tr14_long_6_Cousins_I_IMAGE_FOV.fits')
+        self.data_i = ima_i['DATA'].data
+        ima_i.close()
+        ima_v = fits.open(self.file_v_image)  # datadir+'WFM_Tr14_long_6_Cousins_I_IMAGE_FOV.fits')
+        self.data_v = ima_v['DATA'].data
+        ima_v.close()
+        #
         hdul = fits.open(self.file)
         hdul.info()
         new = hdul['DATA']
-        hdul.close()
         self.cube_data = hdul['DATA'].data
+        self.cube_header = hdul['DATA'].header
+        hdul.close()
         # Setting the wavelength vector
         # new.header
         self.cube_cd11 = new.header['CD1_1']
@@ -140,7 +149,7 @@ class CubeMUSE(object):
         self.cube_cunit3 = new.header['CUNIT3']
         self.cube_Nwl3 = np.arange(new.header['NAXIS3'])
         #
-        self.wcs = WCS(new.header)
+        #self.wcs = WCS(new.header)
 
         self.wl = (self.cube_Nwl3 - self.cube_crpix3 + 1) * self.cube_cdelt3 + self.cube_crval3
         if verbose:
@@ -158,17 +167,24 @@ class CubeMUSE(object):
         if not self.has_centroids:
             self.set_centroids()
         #
+        mywcs = WCS(self.cube_header)
+        #
         self.stars = []
         istar = 0
         for i in range(len(self.sources_i)):
             istar += 1
-            star_id = 'f'+str(self.pointing_code)+'_'+str(istar)
+            if self.stars_from_file:
+                mycoo = SkyCoord((self.sources_i[i])['ALPHA_J2000'], (self.sources_i[i])['DELTA_J2000'], unit="deg")
+                star_id = 'f'+str(self.pointing_code)+'_'+str((self.sources_i[i])['NUMBER'])
+            else:
+                mycoo = mywcs.pixel_to_world((self.sources_i[i])['xcentroid'], (self.sources_i[i])['ycentroid'], 0)
+                star_id = 'f'+str(self.pointing_code)+'_'+str(istar)
             starpars = {
                 'star_id' : star_id,
                 'xcentroid' : (self.sources_i[i])['xcentroid'],
                 'ycentroid' : (self.sources_i[i])['ycentroid'],
                 'mag' : (self.sources_i[i])['mag'],
-                'skycoo' : self.wcs.pixel_to_world((self.sources_i[i])['xcentroid'], (self.sources_i[i])['ycentroid'],0)
+                'skycoo' : mycoo
             }
             self.stars.append(StarMUSE(starpars))
         self.nstars = istar
@@ -185,8 +201,14 @@ class CubeMUSE(object):
         if 'file_pos' in self.params.keys():
             self.file_pos = self.params['file_pos']
             self.sources_i = Table.read(self.datadir+self.file_pos,format='csv')
+            self.sources_i.rename_column('X_IMAGE', 'xcentroid')
+            self.sources_i.rename_column('Y_IMAGE', 'ycentroid')
+            self.sources_i.rename_column('MAG_APER', 'mag')
+            self.positions_i = np.transpose((self.sources_i['xcentroid'], self.sources_i['ycentroid']))
+            self.stars_from_file = True
         else:
             self.positions_i, self.sources_i = get_centroids(self.file_i_image)
+            self.stars_from_file = False
         #
         self.has_centroids =True
 
@@ -207,10 +229,10 @@ class CubeMUSE(object):
         #
         if not image:
             image = self.file_i_image
-        plotfile = self.figdir+plotfile
+        self.plotfile_apc_stars = self.figdir+os.path.split(plotfile)[1]
         self.n_apc = get_stars_for_apc(self.stars,
                                        mindist=mindist, magsat=magsat, magperc=magperc,
-                                       doplo=doplo, image=image, plotfile=plotfile)
+                                       doplo=doplo, image=image, plotfile=self.plotfile_apc_stars)
 
         self.apc_stars = [self.stars[i] for i in self.n_apc]
 
@@ -230,36 +252,42 @@ class CubeMUSE(object):
         :return: void
         """
         #
-        plotfile = self.figdir + plotfile
+
         if not self.has_apc_stars:
             self.set_stars_for_apc(doplo=False)
         self.cog_radii = radii
         self.cog_skyrad = skyrad
 
         #
-        ima_i = fits.open(self.file_i_image)  # datadir+'WFM_Tr14_long_6_Cousins_I_IMAGE_FOV.fits')
-        data_i = ima_i['DATA'].data
-        ima_i.close()
-        ima_v = fits.open(self.file_v_image)  # datadir+'WFM_Tr14_long_6_Cousins_I_IMAGE_FOV.fits')
-        data_v = ima_v['DATA'].data
-        ima_v.close()
-        #
         self.cog_mag_i = runphot_ima_aps(self.positions_i[self.n_apc], self.cog_radii,
-                                         self.cog_skyrad[0], self.cog_skyrad[1], data_i)
+                                         self.cog_skyrad[0], self.cog_skyrad[1], self.data_i)
         self.cog_mag_v = runphot_ima_aps(self.positions_i[self.n_apc], self.cog_radii,
-                                         self.cog_skyrad[0], self.cog_skyrad[1], data_v)
+                                         self.cog_skyrad[0], self.cog_skyrad[1], self.data_v)
+        self.cog_mag_i = [a[0] for a in self.cog_mag_i]
+        self.cog_mag_v = [a[0] for a in self.cog_mag_v]
         for i in range(len([self.stars[j] for j in self.n_apc])):
             self.stars[self.n_apc[i]].cog_mag_i = np.array([a[i] for a in self.cog_mag_i])
             self.stars[self.n_apc[i]].cog_mag_v = np.array([a[i] for a in self.cog_mag_v])
             self.stars[self.n_apc[i]].cog_radii = self.cog_radii
 
         if doplo_iv:
+            self.plotfile_cog = self.figdir + os.path.split(plotfile)[1]
             plot_curve_of_growth_iv(self.cog_radii, self.cog_mag_i, self.cog_mag_v,
                                     self.positions_i[self.n_apc], self.file_i_image, self.file_v_image,
-                                    guessrad=guessrad, plotfile=plotfile)
+                                    guessrad=guessrad, plotfile=self.plotfile_cog)
 
-    def set_apc_values(self,radii=(3.,10.),skyrad=(10,15), hw_box_median=30, sclip_median=2.0,
-                       apc_sclip=3.0, doplo_apc=True, plotfile='f_apc_values.pdf'):
+    def extract_apc_spectra(self):
+        self.apc_cube = np.zeros((len(self.wl),len(self.n_apc)))
+
+        self._run_getspecapc_proc_mp()
+
+        for i in range(len(self.n_apc)):
+            self.stars[self.n_apc[i]].apc_spec = self.apc_cube[:,i]
+            self.stars[self.n_apc[i]].apc_wl = self.wl
+            self.stars[self.n_apc[i]].apc_radii = self.apc_radii
+
+    def set_apc_values(self,radii=(3.,10.),skyrad=(10,15), hw_box_median=50, sclip_median=2.,
+                       apc_sclip=2., apc_fit_order=3, doplo_apc=True, plotfile='f_apc_values.pdf'):
         """Computes the ApC values as a function of wavelength
 
         This funcion is used to compute the aperture correction as a function of wavelength.
@@ -272,12 +300,12 @@ class CubeMUSE(object):
         :param hw_box_median: (int) half width of the box used for running median
         :param sclip_median: (float) number of sigma for the sigma clipping for median computation
         :param apc_sclip: (float) number of sigma for the sigma clipping in combining different stars
+        :param apc_fit_order: (int) order of the polinomial fit for the apc correction
         :param doplo_apc: (bool) if Ture prepare a diagnostic plot
         :param plotfile: (string) name of the figure file
         :return: void
         """
         #
-        plotfile = self.figdir + plotfile
 
         if not self.has_apc_stars:
              self.set_stars_for_apc()
@@ -285,21 +313,32 @@ class CubeMUSE(object):
         self.apc_skyrad = skyrad
 
         #
-        #
-        self.apc_cube = np.zeros((len(self.wl),len(self.n_apc)))
+        self.extract_apc_spectra()
 
-        self._run_getspecapc_proc_mp()
+        self.analyse_apc_spectra(radii=radii, skyrad=skyrad, apc_fit_order=apc_fit_order, hw_box_median=hw_box_median,
+                                 sclip_median=sclip_median, apc_sclip=apc_sclip, doplo_apc=doplo_apc, plotfile=plotfile)
 
-        for i in range(len(self.n_apc)):
-            self.stars[self.n_apc[i]].apc_spec = self.apc_cube[:,i]
-            self.stars[self.n_apc[i]].apc_wl = self.wl
-            self.stars[self.n_apc[i]].apc_radii = self.apc_radii
+        self.has_apc_values = True
+
+    def analyse_apc_spectra(self, radii=(3.,10.), skyrad=(10,15), apc_fit_order=3, hw_box_median=50, sclip_median=3.0,
+                       apc_sclip=2.0, sclip_niter=5, doplo_apc=True, plotfile='f_apc_values.pdf'):
+
+        if not self.has_apc_stars:
+             self.set_stars_for_apc()
+
+        if not self.has_apc_values:
+            self.apc_radii = radii
+            self.apc_skyrad = skyrad
+            self.extract_apc_spectra()
+            self.has_apc_values=True
+
+        self.apc_fit_order = apc_fit_order
 
         self.apc_med_30 = np.zeros((len(self.wl), len(self.n_apc)))
         self.apc_std_30 = np.zeros((len(self.wl), len(self.n_apc)))
         self.apc_mean_30 = np.zeros((len(self.wl), len(self.n_apc)))
 
-        self._run_apc_proc_mp({'hw_box' : hw_box_median, 'sclip' : sclip_median})
+        self._run_apc_proc_mp({'hw_box' : hw_box_median, 'sclip' : sclip_median, 'maxiter' : sclip_niter})
 
         for i in range(len(self.n_apc)):
             self.apc_med_30[:,i] = self.apc_stars[i].apc_med
@@ -310,18 +349,27 @@ class CubeMUSE(object):
         self.apc_mean = np.nanmean(self.apc_mean_30, axis=1)
         self.apc_std = np.nanstd(self.apc_med_30, axis=1)
         if apc_sclip:
-            a2 = apc_sclip*apc_sclip
             for i in range(len(self.wl)):
-                ng = np.where((self.apc_med_30[i, :] - self.apc_med[i])**2 < a2)
-                self.apc_med[i] = np.nanmedian(self.apc_med_30[i,ng], axis=1)
-                self.apc_mean[i] = np.nanmedian(self.apc_mean_30[i, ng], axis=1)
-                self.apc_std[i] = np.nanmedian(self.apc_std_30[i, ng], axis=1)
+                iter = 0
+                a2 = (apc_sclip * self.apc_std[i])**2
+                med = self.apc_med[i]
+                while (iter<sclip_niter):
+                    ng = np.where((self.apc_med_30[i, :] - med)**2 < a2)
+                    med = np.nanmedian(self.apc_med_30[i, ng], axis=1)
+                    mean = np.nanmean(self.apc_mean_30[i, ng], axis=1)
+                    std = np.nanstd(self.apc_med_30[i, ng], axis=1)
+                    a2 = (apc_sclip * std)**2
+                    iter += 1
+                self.apc_med[i] = med
+                self.apc_mean[i] = mean
+                self.apc_std[i] = std
 
-
-        self.has_apc_values = True
+        self.apc_fit = np.poly1d(np.polyfit(self.wl, self.apc_mean, self.apc_fit_order))
 
         if doplo_apc:
-            plot_apc(self.wl, self.apc_cube, self.apc_med, self.apc_mean, self.apc_std, self.apc_med_30, nsig=apc_sclip, plotfile=plotfile)
+            self.plotfile_apc_specra = self.figdir + os.path.split(plotfile)[1]
+            plot_apc(self.wl, self.apc_cube, self.apc_med, self.apc_mean, self.apc_std, self.apc_med_30,
+                     self.apc_fit, nsig=apc_sclip, plotfile=self.plotfile_apc_specra)
 
     def _run_getspecapc_proc_mp(self):
         """Extracts the APC spectra
@@ -366,13 +414,93 @@ class CubeMUSE(object):
             nproc = min(len(self.n_apc),self.nproc)
             myargs = []
             for mystar in self.apc_stars:
-                myargs.append([mystar, my_star_method_args])
+                myargs.append([mystar.apc_spec, my_star_method_args])
 
             with mp.Pool(nproc) as p:
-                self.apc_stars = p.map(apc_calc_single_star, myargs)
+                allstars = p.map(apc_calc_single_star, myargs)
+                #self.apc_stars = p.map(apc_calc_single_star, myargs)
+            for i in range(len(self.apc_stars)):
+                self.apc_stars[i].apc_med = (allstars[i])[0]
+                self.apc_stars[i].apc_mean = (allstars[i])[1]
+                self.apc_stars[i].apc_std = (allstars[i])[2]
         else:       # run single process
             for mystar in self.apc_stars:
-                mystar = apc_calc_single_star([mystar, my_star_method_args])
+                result = apc_calc_single_star([mystar.apc_spec, my_star_method_args])
+                mystar.apc_med = result[0]
+                mystar.apc_mean = result[1]
+                mystar.apc_std = result[2]
 
-    def extract_spectra(self, add_apc=True):
-        pass
+    def extract_spectra(self, radius, sky_radii, add_apc=True):
+        #
+        self.spec_radius = radius
+        self.spec_sky_radii = sky_radii
+        self.spec_add_apc = add_apc
+        self.magspec = np.zeros((len(self.wl), len(self.stars)))
+        self.spectra = np.zeros((len(self.wl), len(self.stars)))
+        #self.corrected_magspec = np.zeros((len(self.wl), len(self.stars)))
+        #self.corrected_spectra = np.zeros((len(self.wl), len(self.stars)))
+        self.skies = np.zeros((len(self.wl), len(self.stars)))
+        self.skies_noise = np.zeros((len(self.wl), len(self.stars)))
+
+        if self.nproc:  # run with multiprocessing
+            nproc = min(len(self.wl), self.nproc)
+            myargs = []
+            for iwl in range(len(self.wl)):
+                myargs.append([self.positions_i, self.spec_radius,
+                               self.spec_sky_radii, self.cube_data[iwl, :, :]])
+                # myargs.append([self, iwl])
+
+            with mp.Pool(nproc) as p:
+                allwl = p.map(get_spec_single_wl, myargs)
+
+            for iwl in range(len(self.wl)):
+                self.magspec[iwl, :], self.spectra[iwl, :], self.skies[iwl, :], self.skies_noise[iwl, :] = allwl[iwl]
+        else:  # run single process
+            for iwl in range(len(self.wl)):
+                self.magspec[iwl, :], self.spectra[iwl, :], self.skies[iwl, :], self.skies_noise[iwl, :] = get_spec_single_wl([self.positions_i, self.spec_radius,
+                               self.spec_sky_radii, self.cube_data[iwl, :, :]])
+
+                #if self.spec_add_apc:
+                #    self.corrected_magspec[iwl, :] = self.magspec[iwl, :] + self.apc_fit(self.wl[iwl])
+                #    self.corrected_spectra[iwl, :] = self.spectra[iwl, :] * 10.**(-0.4*self.apc_fit(self.wl[iwl]))
+
+        for j in range(len(self.stars)):
+            self.stars[j].wl = self.wl
+            self.stars[j].magspec = self.magspec[:, j]
+            self.stars[j].spectrum = self.spectra[:, j] * 10**(-20)
+            self.stars[j].sky = self.skies[:, j] * 10**(-20)
+            self.stars[j].sky_noise = self.skies_noise[:, j] * 10**(-20)
+            self.stars[j].has_spectrum = True
+
+        self.compute_rms_spectra()
+
+        self.has_spectra = True
+
+        if add_apc:
+            self.correct_spectra_apc()
+
+    def compute_rms_spectra(self, hw_box_median=50, sclip_median=3, sclip_niter=5):
+        #
+        mydicargs = {'hw_box' : hw_box_median, 'sclip' : sclip_median, 'maxiter' : sclip_niter}
+        if self.nproc:  # run with multiprocessing
+            nproc = min(len(self.stars), self.nproc)
+            myargs = []
+            for mystar in self.stars:
+                myargs.append([mystar.spectrum, mydicargs])
+
+            with mp.Pool(nproc) as p:
+                allstars = p.map(apc_calc_single_star, myargs)
+                # self.apc_stars = p.map(apc_calc_single_star, myargs)
+            for i in range(len(self.stars)):
+                self.stars[i].rms_spectrum = (allstars[i])[2]
+        else:  # run single process
+            for mystar in self.stars:
+                result = apc_calc_single_star([mystar, mydicargs])
+                mystar.rms_spectrum = result[2]
+
+    def correct_spectra_apc(self):
+        #
+        for j in range(len(self.stars)):
+            self.stars[j].corrected_magspec = self.stars[j].magspec + self.apc_fit(self.wl)
+            self.stars[j].corrected_spectrum = self.stars[j].spectrum * 10.**(-0.4*self.apc_fit(self.wl))
+            self.stars[j].has_corrected_spectrum = True
