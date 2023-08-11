@@ -85,7 +85,6 @@ def do_apphot(in_ima, in_aper, in_annulus):
     ### Extimate the bkg dubctracted flux
     total_bkg = bkg_stats.median * aper_stats.sum_aper_area.value
     apersum_bkgsub = aper_stats.sum - total_bkg
-    #print(apersum_bkgsub)
     mag=apersum_bkgsub * 0
     for elem in range(len(apersum_bkgsub)):
         if apersum_bkgsub[elem] > 0:

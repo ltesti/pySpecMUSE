@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import os
 import numpy as np
 import matplotlib.pyplot as plt
 from .aperturesplots import plotstars
@@ -15,23 +14,18 @@ def plot_curve_of_growth_iv(radii, mag_i, mag_v, positions, file_i, file_v, gues
     mag_70 = -2.5*np.log10(0.7)
     #
     fig, ax = plt.subplots(3, 2, figsize=(12, 18))
-    #fig.subplots_adjust(hspace=0)
 
     plotstars(file_i, positions, ax=ax[0, 0], aprad=radii[-1], fileout=None)
     plotstars(file_v, positions, ax=ax[0, 1], aprad=radii[-1], fileout=None)
 
     ax[1, 0].plot(radii, mag_i)
     ax[1, 0].invert_yaxis()
-    # ax[0,0].set_xlabel('Aperture radius (pix)')
-    # ax[0].set_ylabel('Aperture Correction')
     ax[1, 0].set_ylabel('Mag')
     ax[1 ,0].set_title('Filter I')
 
     ax[1, 1].plot(radii, mag_v)
-    # ax[0,1].set_xlabel('Aperture (pix)')
     ax[1, 1].set_ylabel('Mag')
     ax[1, 1].set_title('Filter V')
-    # ax[0,1].set_ylim(10, 20)
     ax[1, 1].invert_yaxis()
 
     ax[2, 0].plot(radii, mag_i - mag_i[-1])
@@ -42,9 +36,7 @@ def plot_curve_of_growth_iv(radii, mag_i, mag_v, positions, file_i, file_v, gues
     ax[2, 0].plot([guessrad,guessrad], [0,2], linestyle='dashed',label='Ap radius {0:3.1f}'.format(guessrad))
     ax[2, 0].invert_yaxis()
     ax[2, 0].set_xlabel('Aperture radius (pix)')
-    # ax[0].set_ylabel('Aperture Correction')
     ax[2, 0].set_ylabel('Mag')
-    # ax[1, 0].set_title('Filter I')
     ax[2, 0].legend()
 
     ax[2, 1].plot(radii, mag_v - mag_v[-1])
@@ -55,8 +47,6 @@ def plot_curve_of_growth_iv(radii, mag_i, mag_v, positions, file_i, file_v, gues
     ax[2, 1].plot([guessrad,guessrad], [0,2], linestyle='dashed', label='Ap radius {0:3.1f}'.format(guessrad))
     ax[2, 1].set_xlabel('Aperture radius (pix)')
     ax[2, 1].set_ylabel('Mag')
-    # ax[1, 1].set_title('Filter V')
-    # ax[0,1].set_ylim(10, 20)
     ax[2, 1].invert_yaxis()
     ax[2, 1].legend()
 
@@ -84,7 +74,6 @@ def plot_apc(wl, apc_cube, apc_med, apc_mean, apc_std, apc_med_30, apc_fit, nsig
     #
     ax.plot(wl, apc_cube[:, 0], alpha=0.4, color='orange')
     ax.plot(wl, np.nanmedian(apc_cube[:, 0]) * np.ones(len(wl)), color='green')
-    #axs[0].plot(wl, -apcorrmean * np.ones(len(wl)))
     ax.plot(wl, apc_med_30, 'o', color='red', alpha=0.3)
     ax.plot(wl, apc_mean, linestyle='solid', alpha=0.4, color='cyan')
     ax.plot(wl, apc_med, linestyle='dashed', alpha=0.4, color='cyan')

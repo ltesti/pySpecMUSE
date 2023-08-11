@@ -32,7 +32,6 @@ def running_median_spec(sp, hw_box, sclip=2.0, maxiter=2):
         mid = np.nanmedian(a)
         mean = np.nanmean(a)
         std = np.nanstd(a)
-        iter = False
         #
         # if sclip is defined, then proceed with the iterative clipping
         if sclip:

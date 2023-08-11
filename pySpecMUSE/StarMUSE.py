@@ -2,18 +2,10 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-# import multiprocessing as mp
-# from astropy.io import fits
-# from photutils.aperture import CircularAperture, CircularAnnulus
-# import scipy.interpolate as ssi
 import matplotlib.pyplot as plt
 from astropy.visualization import simple_norm
 from photutils.aperture import CircularAperture
-# import os
-# from astropy.table import Table
 
-# from .myphotutils import get_centroids, get_stars_for_apc, runphot_ima_aps
-# from .apc_plots import plot_curve_of_growth_iv, plot_apc
 from .utils import running_median_spec
 
 def apc_calc_single_star(args):
@@ -92,12 +84,7 @@ class StarMUSE(object):
 
     def plot_star_summary(self, images={'image_V': None, 'image_I': None}, figure_file=None):
         #
-        # Unpack data from dictionary
-        #        #
-        # data_v = images['image_V']
-        # data_i = images['image_I']
         aperture = CircularAperture([self.xcentroid, self.ycentroid], r=3)
-        #
         #
         fig, ax = plt.subplot_mosaic([
             ['I', 'I', 'V', 'V'],
@@ -169,7 +156,6 @@ class StarMUSE(object):
                 ax[filter].imshow(images['image_' + filter], cmap='Greys', origin='lower', norm=norm,
                                   interpolation='nearest')
                 aperture.plot(ax=ax[filter], color='orange', lw=1, alpha=0.4)
-                #annulus_aperture[star_to_plot].plot(ax=ax[filter], color='cyan', lw=1, alpha=0.4)
                 ax[filter].set_xlabel('X (pix)')
                 ax[filter].set_ylabel('Y (pix)')
                 ax[filter].set_title('Filter ' + filter)

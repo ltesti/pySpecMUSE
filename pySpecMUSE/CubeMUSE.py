@@ -6,16 +6,11 @@ import multiprocessing as mp
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
-# import pandas as pd
-# from photutils.aperture import CircularAperture, CircularAnnulus
-# import scipy.interpolate as ssi
-# import matplotlib.pyplot as plt
 import os
 from astropy.table import Table
 
 from .myphotutils import get_centroids, get_stars_for_apc, runphot_ima_aps, apc_spec_single_wl, get_spec_single_wl
 from .apc_plots import plot_curve_of_growth_iv, plot_apc
-# from .utils import running_median_spec
 from .StarMUSE import StarMUSE, apc_calc_single_star
 
 
@@ -149,7 +144,6 @@ class CubeMUSE(object):
         self.cube_cunit3 = new.header['CUNIT3']
         self.cube_Nwl3 = np.arange(new.header['NAXIS3'])
         #
-        #self.wcs = WCS(new.header)
 
         self.wl = (self.cube_Nwl3 - self.cube_crpix3 + 1) * self.cube_cdelt3 + self.cube_crval3
         if verbose:
@@ -351,14 +345,14 @@ class CubeMUSE(object):
         if apc_sclip:
             for i in range(len(self.wl)):
                 iter = 0
-                a2 = (apc_sclip * self.apc_std[i])**2
                 med = self.apc_med[i]
+                mean = self.apc_mean[i]
+                std = self.apc_std[i]
                 while (iter<sclip_niter):
-                    ng = np.where((self.apc_med_30[i, :] - med)**2 < a2)
+                    ng = np.where((self.apc_med_30[i, :] - med)**2 < (apc_sclip * std)**2)
                     med = np.nanmedian(self.apc_med_30[i, ng], axis=1)
                     mean = np.nanmean(self.apc_mean_30[i, ng], axis=1)
                     std = np.nanstd(self.apc_med_30[i, ng], axis=1)
-                    a2 = (apc_sclip * std)**2
                     iter += 1
                 self.apc_med[i] = med
                 self.apc_mean[i] = mean
@@ -388,7 +382,6 @@ class CubeMUSE(object):
             for iwl in range(len(self.wl)):
                 myargs.append([self.positions_i[self.n_apc], self.apc_radii,
                                self.apc_skyrad, self.cube_data[iwl,:,:]])
-                #myargs.append([self, iwl])
 
             with mp.Pool(nproc) as p:
                 allwl = p.map(apc_spec_single_wl, myargs)
@@ -418,7 +411,6 @@ class CubeMUSE(object):
 
             with mp.Pool(nproc) as p:
                 allstars = p.map(apc_calc_single_star, myargs)
-                #self.apc_stars = p.map(apc_calc_single_star, myargs)
             for i in range(len(self.apc_stars)):
                 self.apc_stars[i].apc_med = (allstars[i])[0]
                 self.apc_stars[i].apc_mean = (allstars[i])[1]
@@ -437,8 +429,6 @@ class CubeMUSE(object):
         self.spec_add_apc = add_apc
         self.magspec = np.zeros((len(self.wl), len(self.stars)))
         self.spectra = np.zeros((len(self.wl), len(self.stars)))
-        #self.corrected_magspec = np.zeros((len(self.wl), len(self.stars)))
-        #self.corrected_spectra = np.zeros((len(self.wl), len(self.stars)))
         self.skies = np.zeros((len(self.wl), len(self.stars)))
         self.skies_noise = np.zeros((len(self.wl), len(self.stars)))
 
@@ -448,7 +438,6 @@ class CubeMUSE(object):
             for iwl in range(len(self.wl)):
                 myargs.append([self.positions_i, self.spec_radius,
                                self.spec_sky_radii, self.cube_data[iwl, :, :]])
-                # myargs.append([self, iwl])
 
             with mp.Pool(nproc) as p:
                 allwl = p.map(get_spec_single_wl, myargs)
@@ -459,10 +448,6 @@ class CubeMUSE(object):
             for iwl in range(len(self.wl)):
                 self.magspec[iwl, :], self.spectra[iwl, :], self.skies[iwl, :], self.skies_noise[iwl, :] = get_spec_single_wl([self.positions_i, self.spec_radius,
                                self.spec_sky_radii, self.cube_data[iwl, :, :]])
-
-                #if self.spec_add_apc:
-                #    self.corrected_magspec[iwl, :] = self.magspec[iwl, :] + self.apc_fit(self.wl[iwl])
-                #    self.corrected_spectra[iwl, :] = self.spectra[iwl, :] * 10.**(-0.4*self.apc_fit(self.wl[iwl]))
 
         for j in range(len(self.stars)):
             self.stars[j].wl = self.wl
@@ -490,7 +475,6 @@ class CubeMUSE(object):
 
             with mp.Pool(nproc) as p:
                 allstars = p.map(apc_calc_single_star, myargs)
-                # self.apc_stars = p.map(apc_calc_single_star, myargs)
             for i in range(len(self.stars)):
                 self.stars[i].rms_spectrum = (allstars[i])[2]
         else:  # run single process
