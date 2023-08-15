@@ -22,3 +22,4 @@ from .aperturesplots import plotstars
 from .utils import running_median_spec
 from .CubeMUSE import CubeMUSE
 from .StarMUSE import StarMUSE
+from .star_plots import plot_star

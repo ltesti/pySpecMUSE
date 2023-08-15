@@ -31,15 +31,16 @@ class CubeMUSE(object):
 
         Example:
             pars={'code' : '6',
-                  'nproc' : 8,
-                  'datadir' : '/users/ltesti/Desktop/GDrive-INAF/ColabDataTesiGiuseppe/F6/',
-                  'default_names' : False,
-                  'file' : 'DATA_Long6.fits',
-                  'file_i_image' : 'WFM_Tr14_long_6_Cousins_I_IMAGE_FOV.fits',
-                  'file_v_image' : 'WFM_Tr14_long_6_Johnson_V_IMAGE_FOV.fits',
-                  'file_pos' : 'i.dat',
-                  'coo_offset' : [0.0,0.0,0.0], # astrometric offset [arcsec, arcsec, pa]
-                  }
+                           'nproc' : 8,
+                           'datadir' : '/Users/ltesti/Carina_test/F6/',
+                           'figdir' : '/Users/ltesti/Carina_test/F6/fig/',
+                           'default_names' : False,
+                           'file' : 'DATA_Long6.fits',
+                           'file_i_image' : 'WFM_Tr14_long_6_Cousins_I_IMAGE_FOV.fits',
+                           'file_v_image' : 'WFM_Tr14_long_6_Johnson_V_IMAGE_FOV.fits',
+                           # 'file_pos' : 'i.dat',
+                           'coo_offset' : [0.0,0.0,0.0], # astrometric offset [arcsec, arcsec, pa]
+                           }
         """
 
     def __init__(self, parameters):
