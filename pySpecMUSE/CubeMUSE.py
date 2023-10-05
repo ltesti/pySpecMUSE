@@ -6,13 +6,13 @@ import multiprocessing as mp
 from astropy.io import fits
 from astropy.wcs import WCS
 # import pandas as pd
-# from photutils.aperture import CircularAperture, CircularAnnulus
+from photutils.aperture import CircularAperture, CircularAnnulus
 # import scipy.interpolate as ssi
 # import matplotlib.pyplot as plt
 # import os
 from astropy.table import Table
 
-from .myphotutils import get_centroids, get_stars_for_apc, runphot_ima_aps, apc_spec_single_wl
+from .myphotutils import get_centroids, get_stars_for_apc, runphot_ima_aps, apc_spec_single_wl, do_apphot
 from .apc_plots import plot_curve_of_growth_iv, plot_apc
 # from .utils import running_median_spec
 from .StarMUSE import StarMUSE, apc_calc_single_star
@@ -362,5 +362,30 @@ class CubeMUSE(object):
             for mystar in self.apc_stars:
                 mystar = apc_calc_single_star([mystar, my_star_method_args])
 
-    def extract_spectra(self, add_apc=True):
-        pass
+    def extract_spectra(self, add_apc=True, radius=3, sky_radius=10., sky_dannulus=5.):
+        self.my_spectra = np.zeros((len(self.positions_i),len(self.wl)))
+        self.my_magspec = np.copy(self.my_spectra)
+        self.my_skies = np.copy(self.my_spectra)
+        self.my_skies_noise = np.copy(self.my_spectra)
+
+        if add_apc:
+            radius = self.apc_radii[0]
+
+        self.apertures_i = CircularAperture(self.positions_i, r=radius)
+        self.annulus_aperture = CircularAnnulus(positions_i, sky_radius, sky_radius+sky_dannulus)
+
+        if self.nproc:
+            nproc = min(len(self.wl), self.nproc)
+            myargs = [[self.cube_data[i,:,:], self.apertures_i, self.annulus_aperture] for i in range(len(self.wl))]
+
+            with mp.Pool(nproc) as p:
+                magspecout, spectraout, skiesout, skies_noiseout = p.map(do_apphot, myargs)
+            for i in range(len(self.wl)):
+                my_magspec[:,i] = magspecout[i]
+                my_spectra[:,i] = spectraout[i]
+                my_skies[:,i] = skiesout[i]
+                my_skies_noise[:,i] = skies_noiseout[i]
+        else:
+            for i in range(len(self.wl)):
+                my_magspec[:,i], my_spectra[:,i], my_skies[:,i], my_skies_noise[:,i] = do_apphot(new.data[i,:,:],apertures_i,annulus_aperture)
+            
