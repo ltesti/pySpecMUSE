@@ -7,6 +7,7 @@ from astropy.visualization import simple_norm
 from photutils.aperture import CircularAperture
 
 from .utils import running_median_spec
+from .lines import line_integral, known_lines, lineplot
 from .star_plots import plot_star
 
 def apc_calc_single_star(args):
@@ -83,7 +84,39 @@ class StarMUSE(object):
         self.corrected_spectrum = None
         self.has_corrected_spectrum = False
 
+        # line measurements
+        self.has_lines = False
+        self.lines = {}
+
     def plot_star_summary(self, images={'image_V': None, 'image_I': None}, figure_file=None):
         #
         plot_star(self, images=images, figure_file=figure_file)
-        
+
+    def get_line(self, linepars=None):
+        #
+        if linepars:
+            if 'linename' not in linepars.keys():
+                linepars['linename'] = '[OI]6300'
+            if 'wlmin' not in linepars.keys():
+                linepars['wlmin'] = 6297
+            if 'wlmax' not in linepars.keys():
+                linepars['wlmax'] = 6303
+            if 'wlcont1' not in linepars.keys():
+                linepars['wlcont1'] = 6250
+            if 'wlcont2' not in linepars.keys():
+                linepars['wlcont2'] = 6350
+            if 'min_snr' not in linepars.keys():
+                linepars['min_snr'] = 3.
+            if 'doplot' not in linepars.keys():
+                linepars['doplot'] = 'True'
+            if 'plotsky' not in linepars.keys():
+                linepars['plotsky'] = 'True'
+            if 'conttype' not in linepars.keys():
+                linepars['conttype'] = 'median'
+            retdic = line_integral(self, linepars['wlmin'], linepars['wlmax'], 
+                                   linepars['wlcont1'], linepars['wlcont2'], 
+                                   min_snr=linepars['min_snr'], doplot=linepars['doplot'], 
+                                   plotsky=linepars['plotsky'], conttype=linepars['conttype'])
+            self.lines[linepars['linename']] = retdic
+        else:
+            pass

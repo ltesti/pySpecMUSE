@@ -12,6 +12,7 @@ from astropy.table import Table
 from .myphotutils import get_centroids, get_stars_for_apc, runphot_ima_aps, apc_spec_single_wl, get_spec_single_wl
 from .apc_plots import plot_curve_of_growth_iv, plot_apc
 from .StarMUSE import StarMUSE, apc_calc_single_star
+from .lines import known_lines
 
 
 class CubeMUSE(object):
@@ -489,3 +490,22 @@ class CubeMUSE(object):
             self.stars[j].corrected_magspec = self.stars[j].magspec + self.apc_fit(self.wl)
             self.stars[j].corrected_spectrum = self.stars[j].spectrum * 10.**(-0.4*self.apc_fit(self.wl))
             self.stars[j].has_corrected_spectrum = True
+
+    def get_all_lines(self):
+        #
+        # if self.nproc:  # run with multiprocessing
+        #     nproc = min(len(self.stars), self.nproc)
+        #     myargs = []
+        #     for mystar in self.stars:
+        #         myargs.append([mystar.spectrum, mydicargs])
+
+
+        #     with mp.Pool(nproc) as p:
+        #         allwl = p.map(get_spec_single_wl, myargs)
+
+        #     for iwl in range(len(self.wl)):
+        #         self.magspec[iwl, :], self.spectra[iwl, :], self.skies[iwl, :], self.skies_noise[iwl, :] = allwl[iwl]
+        # else:  # run single process
+        for mystar in self.stars:
+            for line in known_lines:
+                mystar.get_line(line)

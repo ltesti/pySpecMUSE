@@ -23,3 +23,4 @@ from .utils import running_median_spec
 from .CubeMUSE import CubeMUSE
 from .StarMUSE import StarMUSE
 from .star_plots import plot_star
+from .lines import line_integral, lineplot, known_lines
