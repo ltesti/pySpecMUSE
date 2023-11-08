@@ -7,6 +7,8 @@ from astropy.visualization import simple_norm
 from photutils.aperture import CircularAperture
 
 from .utils import running_median_spec
+from .lines import line_integral, known_lines, lineplot
+from .star_plots import plot_star
 
 def apc_calc_single_star(args):
     # wrapper per calcolare in multiprocessing le apc
@@ -82,84 +84,39 @@ class StarMUSE(object):
         self.corrected_spectrum = None
         self.has_corrected_spectrum = False
 
+        # line measurements
+        self.has_lines = False
+        self.lines = {}
+
     def plot_star_summary(self, images={'image_V': None, 'image_I': None}, figure_file=None):
         #
-        aperture = CircularAperture([self.xcentroid, self.ycentroid], r=3)
+        plot_star(self, images=images, figure_file=figure_file)
+
+    def get_line(self, linepars=None):
         #
-        fig, ax = plt.subplot_mosaic([
-            ['I', 'I', 'V', 'V'],
-            ['I', 'I', 'V', 'V'],
-            ['sp', 'sp', 'sp', 'sp'],
-            ['lsp', 'lsp', 'lsp', 'lsp'],
-            ['Ha', 'HeI', 'LiI', '[OI]'],
-            ['Ha', 'HeI', 'LiI', '[OI]'],
-            ['Ha', 'Hb', 'CaIRT', 'CaIRT'],
-            ['Ha', 'Hb', 'CaIRT', 'CaIRT']],
-            layout='constrained', figsize=(12, 18))
-
-        plotlims = {
-            'sp': (4700, 9400),
-            'lsp': (4700, 9400),
-            'Hb': (4800, 4920),
-            'Ha': (6500, 6620),
-            'HeI': (5850, 5900),
-            'LiI': (6690, 6740),
-            '[OI]': (6200, 6400),
-            'CaIRT': (8450, 8700),
-        }
-        plotscale = {
-            'sp': 'linear',
-            'lsp': 'log',
-            'Hb': 'log',
-            'Ha': 'log',
-            'HeI': 'log',
-            'LiI': 'log',
-            '[OI]': 'log',
-            'CaIRT': 'log',
-        }
-        plotlabel = {
-            'sp': 'Spectra',
-            'lsp': r'Log$_{10}$(Spectra)',
-            'Hb': r'H$\beta$',
-            'Ha': r'H$\alpha$',
-            'HeI': r'HeI',
-            'LiI': r'LiI',
-            '[OI]': r'[OI]$\lambda$6300]',
-            'CaIRT': 'Ca IR Triplet',
-        }
-
-        for lab in ['sp', 'lsp', 'Ha', 'Hb', 'HeI', 'LiI', '[OI]', 'CaIRT']:
-            nlab = np.where((self.wl >= plotlims[lab][0]) & (self.wl <= plotlims[lab][1]))
-            ax[lab].plot(self.wl[nlab], self.corrected_spectrum[nlab], color='g', linestyle='solid')
-            ax[lab].plot(self.wl[nlab], self.spectrum[nlab], color='b', linestyle='solid', alpha=0.3)
-            ax[lab].plot(self.wl[nlab], self.sky[nlab], color='k', linestyle='solid', alpha=0.3)
-            ax[lab].fill_between(self.wl[nlab],
-                                 self.sky[nlab] - self.sky_noise[nlab],
-                                 self.sky[nlab] + self.sky_noise[nlab],
-                                 color='grey', linestyle='solid', alpha=0.2)
-            ax[lab].fill_between(self.wl[nlab],
-                                 self.corrected_spectrum[nlab] - self.sky_noise[nlab],
-                                 self.corrected_spectrum[nlab] + self.sky_noise[nlab],
-                                 color='lightgreen', linestyle='solid', alpha=0.2)
-            ax[lab].fill_between(self.wl[nlab],
-                                 self.corrected_spectrum[nlab] - self.rms_spectrum[nlab],
-                                 self.corrected_spectrum[nlab] + self.rms_spectrum[nlab],
-                                 color='r', linestyle='solid', alpha=0.2)
-            #
-            ax[lab].set_xlabel('Wavelength ($\AA$)')
-            ax[lab].set_title(plotlabel[lab])
-            ax[lab].set_xlim(plotlims[lab][0], plotlims[lab][1])
-            ax[lab].set_yscale(plotscale[lab])
-
-            for filter in ['I', 'V']:
-                norm = simple_norm(images['image_' + filter], 'sqrt', percent=92.)
-                ax[filter].imshow(images['image_' + filter], cmap='Greys', origin='lower', norm=norm,
-                                  interpolation='nearest')
-                aperture.plot(ax=ax[filter], color='orange', lw=1, alpha=0.4)
-                ax[filter].set_xlabel('X (pix)')
-                ax[filter].set_ylabel('Y (pix)')
-                ax[filter].set_title('Filter ' + filter)
-
-        if figure_file:
-            plt.tight_layout()
-            plt.savefig(figure_file)
+        if linepars:
+            if 'linename' not in linepars.keys():
+                linepars['linename'] = '[OI]6300'
+            if 'wlmin' not in linepars.keys():
+                linepars['wlmin'] = 6297
+            if 'wlmax' not in linepars.keys():
+                linepars['wlmax'] = 6303
+            if 'wlcont1' not in linepars.keys():
+                linepars['wlcont1'] = 6250
+            if 'wlcont2' not in linepars.keys():
+                linepars['wlcont2'] = 6350
+            if 'min_snr' not in linepars.keys():
+                linepars['min_snr'] = 3.
+            if 'doplot' not in linepars.keys():
+                linepars['doplot'] = 'True'
+            if 'plotsky' not in linepars.keys():
+                linepars['plotsky'] = 'True'
+            if 'conttype' not in linepars.keys():
+                linepars['conttype'] = 'median'
+            retdic = line_integral(self, linepars['wlmin'], linepars['wlmax'], 
+                                   linepars['wlcont1'], linepars['wlcont2'], 
+                                   min_snr=linepars['min_snr'], doplot=linepars['doplot'], 
+                                   plotsky=linepars['plotsky'], conttype=linepars['conttype'])
+            self.lines[linepars['linename']] = retdic
+        else:
+            pass

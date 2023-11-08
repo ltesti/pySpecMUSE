@@ -12,6 +12,7 @@ from astropy.table import Table
 from .myphotutils import get_centroids, get_stars_for_apc, runphot_ima_aps, apc_spec_single_wl, get_spec_single_wl
 from .apc_plots import plot_curve_of_growth_iv, plot_apc
 from .StarMUSE import StarMUSE, apc_calc_single_star
+from .lines import known_lines
 
 
 class CubeMUSE(object):
@@ -31,15 +32,16 @@ class CubeMUSE(object):
 
         Example:
             pars={'code' : '6',
-                  'nproc' : 8,
-                  'datadir' : '/users/ltesti/Desktop/GDrive-INAF/ColabDataTesiGiuseppe/F6/',
-                  'default_names' : False,
-                  'file' : 'DATA_Long6.fits',
-                  'file_i_image' : 'WFM_Tr14_long_6_Cousins_I_IMAGE_FOV.fits',
-                  'file_v_image' : 'WFM_Tr14_long_6_Johnson_V_IMAGE_FOV.fits',
-                  'file_pos' : 'i.dat',
-                  'coo_offset' : [0.0,0.0,0.0], # astrometric offset [arcsec, arcsec, pa]
-                  }
+                           'nproc' : 8,
+                           'datadir' : '/Users/ltesti/Carina_test/F6/',
+                           'figdir' : '/Users/ltesti/Carina_test/F6/fig/',
+                           'default_names' : False,
+                           'file' : 'DATA_Long6.fits',
+                           'file_i_image' : 'WFM_Tr14_long_6_Cousins_I_IMAGE_FOV.fits',
+                           'file_v_image' : 'WFM_Tr14_long_6_Johnson_V_IMAGE_FOV.fits',
+                           # 'file_pos' : 'i.dat',
+                           'coo_offset' : [0.0,0.0,0.0], # astrometric offset [arcsec, arcsec, pa]
+                           }
         """
 
     def __init__(self, parameters):
@@ -64,6 +66,18 @@ class CubeMUSE(object):
                     self.nproc = self.params['nproc']
                     if self.nproc < 2:
                         self.nproc = None
+            if 'daofind_threshold' in self.params.keys():
+                self.daofind_threshold = self.params['daofind_threshold']
+            else:
+                self.daofind_threshold = 1.0
+            if 'daofind_sigma_radius' in self.params.keys():
+                self.daofind_sigma_radius = self.params['daofind_sigma_radius']
+            else:
+                self.daofind_sigma_radius = 2.0
+            if 'saturation_magnitude' in self.params.keys():
+                self.magsat = self.params['saturation_magnitude']
+            else:
+                self.magsat = -8.0
 
             self.set_parameters()
             self.set_cubewcs()
@@ -201,19 +215,18 @@ class CubeMUSE(object):
             self.positions_i = np.transpose((self.sources_i['xcentroid'], self.sources_i['ycentroid']))
             self.stars_from_file = True
         else:
-            self.positions_i, self.sources_i = get_centroids(self.file_i_image)
+            self.positions_i, self.sources_i = get_centroids(self.file_i_image, thres=self.daofind_threshold, sigma_radius=self.daofind_sigma_radius)
             self.stars_from_file = False
         #
         self.has_centroids =True
 
-    def set_stars_for_apc(self, mindist=10, magsat=-8, magperc=8,
+    def set_stars_for_apc(self, mindist=10, magperc=8,
                           doplo=True, image=None, plotfile='f_stars_for_apc.pdf'):
         """Select ApC stars
 
         Function to identify the APC stars in the field.
 
         :param mindist: (float) minimum distance (in pixels) to consider star as isolated
-        :param magsat: (float) minimum magnitude below which a star is considered to be saturated
         :param magperc: (float) percentile to select th ebrightest stars in the field
         :param doplo: (bool) if True prepare a diagnostic plot
         :param image: (fits file name) if set uses this as background image, otherwise the I band is used
@@ -225,7 +238,7 @@ class CubeMUSE(object):
             image = self.file_i_image
         self.plotfile_apc_stars = self.figdir+os.path.split(plotfile)[1]
         self.n_apc = get_stars_for_apc(self.stars,
-                                       mindist=mindist, magsat=magsat, magperc=magperc,
+                                       mindist=mindist, magsat=self.magsat, magperc=magperc,
                                        doplo=doplo, image=image, plotfile=self.plotfile_apc_stars)
 
         self.apc_stars = [self.stars[i] for i in self.n_apc]
@@ -488,3 +501,22 @@ class CubeMUSE(object):
             self.stars[j].corrected_magspec = self.stars[j].magspec + self.apc_fit(self.wl)
             self.stars[j].corrected_spectrum = self.stars[j].spectrum * 10.**(-0.4*self.apc_fit(self.wl))
             self.stars[j].has_corrected_spectrum = True
+
+    def get_all_lines(self):
+        #
+        # if self.nproc:  # run with multiprocessing
+        #     nproc = min(len(self.stars), self.nproc)
+        #     myargs = []
+        #     for mystar in self.stars:
+        #         myargs.append([mystar.spectrum, mydicargs])
+
+
+        #     with mp.Pool(nproc) as p:
+        #         allwl = p.map(get_spec_single_wl, myargs)
+
+        #     for iwl in range(len(self.wl)):
+        #         self.magspec[iwl, :], self.spectra[iwl, :], self.skies[iwl, :], self.skies_noise[iwl, :] = allwl[iwl]
+        # else:  # run single process
+        for mystar in self.stars:
+            for line in known_lines:
+                mystar.get_line(line)
