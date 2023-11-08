@@ -9,7 +9,7 @@ from photutils.aperture import CircularAperture, CircularAnnulus, ApertureStats
 
 from .aperturesplots import plotstars
 
-def get_centroids(imagefile, verbose=True, sigma=5.0, fwhm=4.5, thres=1., sigma_radius=2.):
+def get_centroids(imagefile, verbose=True, sigma=5.0, fwhm=4.5, thres=1., sigma_radius=2.0):
     #
     ima = fits.open(imagefile)  # datadir+'WFM_Tr14_long_6_Cousins_I_IMAGE_FOV.fits')
     data = ima['DATA'].data

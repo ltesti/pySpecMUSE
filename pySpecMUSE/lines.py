@@ -54,9 +54,12 @@ def line_integral(Star, wlmin, wlmax, wlcont1, wlcont2, min_snr=3.,
         'wlcont2' : wlcont2,
         'fline_max' : fline_max,
         'spec_rms' : spec_rms,
+        'snr_peak' : fline_max/spec_rms,
         'fint' : fint,
         'fint_noise' : fint_noise,
-        'fsky_noise' : fsky_noise
+        'snr_fint' : fint/fint_noise,
+        'fsky_noise' : fsky_noise,
+        'snr_fint_sky' : fint/fsky_noise,
 
     }
 
@@ -93,16 +96,18 @@ def lineplot(lp, plotsky=True):
 
 def linear(x, y, doplot=False):
         #
+        ym = np.median(y)
+        yr = y-ym
         n = len(x)
         sx = x.sum()
         sxx = (x*x).sum()
-        sy = (y).sum()
-        sxy = (x*y).sum()
+        sy = (yr).sum()
+        sxy = (x*yr).sum()
         det = n*sxx-sx*sx
         a = (n*sxy-sy*sx)/det
         b = (sy*sxx-sx*sxy)/det
         if doplot:
             plt.plot(x, y, 'o', color='b')
             xx=np.linspace(np.min(x),np.max(x), 100)
-            plt.plot(xx, a+b*xx, linestyle='--', color='red')
-        return (a, b)
+            plt.plot(xx, a+ym+b*xx, linestyle='--', color='red')
+        return (a+ym, b)

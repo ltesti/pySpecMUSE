@@ -66,6 +66,18 @@ class CubeMUSE(object):
                     self.nproc = self.params['nproc']
                     if self.nproc < 2:
                         self.nproc = None
+            if 'daofind_threshold' in self.params.keys():
+                self.daofind_threshold = self.params['daofind_threshold']
+            else:
+                self.daofind_threshold = 1.0
+            if 'daofind_sigma_radius' in self.params.keys():
+                self.daofind_sigma_radius = self.params['daofind_sigma_radius']
+            else:
+                self.daofind_sigma_radius = 2.0
+            if 'saturation_magnitude' in self.params.keys():
+                self.magsat = self.params['saturation_magnitude']
+            else:
+                self.magsat = -8.0
 
             self.set_parameters()
             self.set_cubewcs()
@@ -203,19 +215,18 @@ class CubeMUSE(object):
             self.positions_i = np.transpose((self.sources_i['xcentroid'], self.sources_i['ycentroid']))
             self.stars_from_file = True
         else:
-            self.positions_i, self.sources_i = get_centroids(self.file_i_image)
+            self.positions_i, self.sources_i = get_centroids(self.file_i_image, thres=self.daofind_threshold, sigma_radius=self.daofind_sigma_radius)
             self.stars_from_file = False
         #
         self.has_centroids =True
 
-    def set_stars_for_apc(self, mindist=10, magsat=-8, magperc=8,
+    def set_stars_for_apc(self, mindist=10, magperc=8,
                           doplo=True, image=None, plotfile='f_stars_for_apc.pdf'):
         """Select ApC stars
 
         Function to identify the APC stars in the field.
 
         :param mindist: (float) minimum distance (in pixels) to consider star as isolated
-        :param magsat: (float) minimum magnitude below which a star is considered to be saturated
         :param magperc: (float) percentile to select th ebrightest stars in the field
         :param doplo: (bool) if True prepare a diagnostic plot
         :param image: (fits file name) if set uses this as background image, otherwise the I band is used
@@ -227,7 +238,7 @@ class CubeMUSE(object):
             image = self.file_i_image
         self.plotfile_apc_stars = self.figdir+os.path.split(plotfile)[1]
         self.n_apc = get_stars_for_apc(self.stars,
-                                       mindist=mindist, magsat=magsat, magperc=magperc,
+                                       mindist=mindist, magsat=self.magsat, magperc=magperc,
                                        doplo=doplo, image=image, plotfile=self.plotfile_apc_stars)
 
         self.apc_stars = [self.stars[i] for i in self.n_apc]
