@@ -6,7 +6,13 @@ import matplotlib.pyplot as plt
 
 known_lines = [
     { 'linename' : '[OI]6300', 'wlmin' : 6297, 'wlmax' : 6303, 'wlcont1' : 6250, 'wlcont2' : 6350,
-      'min_snr' : 3., 'doplot' : False, 'plotsky' : False, 'conttype' : 'median' }
+      'min_snr' : 3., 'doplot' : False, 'plotsky' : False, 'conttype' : 'median' },
+    { 'linename' : 'Hbeta', 'wlmin' : 4853, 'wlmax' : 4868, 'wlcont1' : 4800, 'wlcont2' : 4950,
+      'min_snr' : 3., 'doplot' : False, 'plotsky' : False, 'conttype' : 'median' },
+    { 'linename' : 'HeI5876', 'wlmin' : 5870, 'wlmax' : 5880, 'wlcont1' : 5776, 'wlcont2' : 5976,
+      'min_snr' : 3., 'doplot' : False, 'plotsky' : False, 'conttype' : 'median' },
+    { 'linename' : 'Halpha', 'wlmin' : 6553, 'wlmax' : 6572, 'wlcont1' : 6520, 'wlcont2' : 6610,
+      'min_snr' : 3., 'doplot' : False, 'plotsky' : False, 'conttype' : 'median' },
 ]
 
 def line_integral(Star, wlmin, wlmax, wlcont1, wlcont2, min_snr=3., 
