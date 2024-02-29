@@ -60,13 +60,12 @@ class CubeMUSE(object):
             else:
                 self.coo_offset = None
 
-            self.nproc = 1
+            self.nproc = None
             if 'nproc' in self.params.keys():
                 if (self.params['nproc']):
                     self.nproc = self.params['nproc']
-                    if not self.nproc:
-                        self.nproc = 1
-            #
+                    if self.nproc < 2:
+                        self.nproc = None
             if 'daofind_threshold' in self.params.keys():
                 self.daofind_threshold = self.params['daofind_threshold']
             else:
@@ -283,6 +282,7 @@ class CubeMUSE(object):
             plot_curve_of_growth_iv(self.cog_radii, self.cog_mag_i, self.cog_mag_v,
                                     self.positions_i[self.n_apc], self.file_i_image, self.file_v_image,
                                     guessrad=guessrad, plotfile=self.plotfile_cog)
+        	
 
     def extract_apc_spectra(self):
         self.apc_cube = np.zeros((len(self.wl),len(self.n_apc)))
@@ -322,7 +322,6 @@ class CubeMUSE(object):
 
         #
         self.extract_apc_spectra()
-        self.has_apc_spectra = True
 
         self.analyse_apc_spectra(radii=radii, skyrad=skyrad, apc_fit_order=apc_fit_order, hw_box_median=hw_box_median,
                                  sclip_median=sclip_median, apc_sclip=apc_sclip, doplo_apc=doplo_apc, plotfile=plotfile)
@@ -335,7 +334,7 @@ class CubeMUSE(object):
         if not self.has_apc_stars:
              self.set_stars_for_apc()
 
-        if not self.has_apc_spectra:
+        if not self.has_apc_values:
             self.apc_radii = radii
             self.apc_skyrad = skyrad
             self.extract_apc_spectra()
@@ -391,7 +390,7 @@ class CubeMUSE(object):
         """
         #
         #
-        if self.nproc > 1:   # run with multiprocessing
+        if self.nproc:   # run with multiprocessing
             nproc = min(len(self.wl),self.nproc)
             myargs = []
             for iwl in range(len(self.wl)):
@@ -418,7 +417,7 @@ class CubeMUSE(object):
         :return:
         """
         #
-        if self.nproc > 1:   # run with multiprocessing
+        if self.nproc:   # run with multiprocessing
             nproc = min(len(self.n_apc),self.nproc)
             myargs = []
             for mystar in self.apc_stars:
@@ -447,7 +446,7 @@ class CubeMUSE(object):
         self.skies = np.zeros((len(self.wl), len(self.stars)))
         self.skies_noise = np.zeros((len(self.wl), len(self.stars)))
 
-        if self.nproc > 1:  # run with multiprocessing
+        if self.nproc:  # run with multiprocessing
             nproc = min(len(self.wl), self.nproc)
             myargs = []
             for iwl in range(len(self.wl)):
@@ -482,7 +481,7 @@ class CubeMUSE(object):
     def compute_rms_spectra(self, hw_box_median=50, sclip_median=3, sclip_niter=5):
         #
         mydicargs = {'hw_box' : hw_box_median, 'sclip' : sclip_median, 'maxiter' : sclip_niter}
-        if self.nproc > 1:  # run with multiprocessing
+        if self.nproc:  # run with multiprocessing
             nproc = min(len(self.stars), self.nproc)
             myargs = []
             for mystar in self.stars:
@@ -506,7 +505,7 @@ class CubeMUSE(object):
 
     def get_all_lines(self):
         #
-        # if self.nproc > 1:  # run with multiprocessing
+        # if self.nproc:  # run with multiprocessing
         #     nproc = min(len(self.stars), self.nproc)
         #     myargs = []
         #     for mystar in self.stars:
