@@ -55,7 +55,8 @@ def plot_curve_of_growth_iv(radii, mag_i, mag_v, positions, file_i, file_v, gues
 
 def plot_apc(wl, apc_cube, apc_med, apc_mean, apc_std, apc_med_30, apc_fit, nsig=None, plotfile=None):
 
-    fig, ax = plt.subplots(figsize=(20, 7))
+    fig, ((ax1), (ax2)) = plt.subplots(2, 1, figsize=(20, 7), sharey=False, sharex=True)
+    plt.subplots_adjust(right=0.7)
 
     if nsig:
         nsigma = nsig
@@ -64,22 +65,47 @@ def plot_apc(wl, apc_cube, apc_med, apc_mean, apc_std, apc_med_30, apc_fit, nsig
 
     fig.suptitle('Aperture correction')
 
-    ax.plot(wl, apc_med, color='blue')
     #
-    ymin = np.percentile(apc_med_30, 0.1)
-    ymax = np.percentile(apc_med_30, 99.9)
-    ax.set_ylim(ymin, ymax)
+    y1min = np.percentile(apc_fit(wl), 0.1) - (np.percentile(apc_fit(wl), 0.1)/1.3)*(np.percentile(apc_fit(wl), 0.1)/abs(np.percentile(apc_fit(wl), 0.1)))
+    y1max = np.percentile(apc_fit(wl), 99.9) + (np.percentile(apc_fit(wl), 99.9)/1.3)*(np.percentile(apc_fit(wl), 99.9)/abs(np.percentile(apc_fit(wl), 99.9)))
+    #y1min = np.percentile(apc_med_30, 0.1111)
+    #y1max = np.percentile(apc_med_30, 99.999999)
+    #y1max = 0
+    #y1min = -3
+    #y2max = np.percentile(apc_med_30, 99.999999) # For fields 13,
+    #y2min = np.percentile(apc_med_30, 0.1111)	# For fields 13,
+    y2max = 7
+    y2min= -5
 
-    ax.fill_between(wl, apc_med-nsigma*apc_std, apc_med+nsigma*apc_std, alpha=0.25, color='blue')
+	#
+    ax1.fill_between(wl, apc_med-nsigma*apc_std, apc_med+nsigma*apc_std, alpha=0.25, color='xkcd:macaroni and cheese', label='Minimum to maximum errors of the AC curves')
     #
-    ax.plot(wl, apc_cube[:, 0], alpha=0.4, color='orange')
-    ax.plot(wl, np.nanmedian(apc_cube[:, 0]) * np.ones(len(wl)), color='green')
-    ax.plot(wl, apc_med_30, 'o', color='red', alpha=0.3)
-    ax.plot(wl, apc_mean, linestyle='solid', alpha=0.4, color='cyan')
-    ax.plot(wl, apc_med, linestyle='dashed', alpha=0.4, color='cyan')
-    ax.plot(wl, apc_fit(wl), linestyle='dashed', linewidth=3, color='yellow')
-    ax.set_xlabel('Wavelength')
-    ax.set_ylabel('Aperture Correction')
+    ax1.plot(wl, apc_cube[:, 0], alpha=0.4, color='xkcd:pale purple', label= 'Minimum to maximum values of the AC curves')
+    ax1.plot(wl, np.nanmedian(apc_cube[:, 0]) * np.ones(len(wl)), color='xkcd:boring green', label='Median value')
+    ax1.plot(wl, apc_med_30, '.', color='xkcd:magenta', markersize=0.5) # alpha=0.3,
+    ax1.plot(5000, 20, '.', color='xkcd:magenta', markersize=0.5, label='Median 30 AC curves')
+    ax1.plot(wl, apc_mean, linestyle='solid', alpha=0.25, color='xkcd:soft pink', label='Mean AC') 
+    ax1.plot(wl, apc_med, linestyle='dashed', alpha=0.25, color='xkcd:sky blue', label='Median AC')
+    ax1.plot(wl, apc_fit(wl), linestyle='dashed', linewidth=3, color='xkcd:indigo', label='Fit')
+    ax1.set_xlabel(r'$Wavelength   (\AA)$')
+    ax1.set_ylabel('Aperture Correction')
+    ax1.set_ylim(y1min, y1max)
+    ax1.legend(bbox_to_anchor=(1.04, 1), borderaxespad=0)
+    
+    #
+    ax2.fill_between(wl, apc_med-nsigma*apc_std, apc_med+nsigma*apc_std, alpha=0.25, color='xkcd:macaroni and cheese', label='Minimum to maximum errors of the AC curves')
+    #
+    ax2.plot(wl, apc_cube[:, 0], alpha=0.4, color='xkcd:pale purple', label= 'Minimum to maximum values of the AC curves')
+    ax2.plot(wl, np.nanmedian(apc_cube[:, 0]) * np.ones(len(wl)), color='xkcd:boring green', label='Median value')
+    ax2.plot(wl, apc_med_30, '.', color='xkcd:magenta', markersize=0.5) # alpha=0.3,
+    ax2.plot(5000, 20, '.', color='xkcd:magenta', markersize=0.5, label='Median 30 AC curves')
+    ax2.plot(wl, apc_mean, linestyle='solid', alpha=0.25, color='xkcd:soft pink', label='Mean AC') 
+    ax2.plot(wl, apc_med, linestyle='dashed', alpha=0.25, color='xkcd:sky blue', label='Median AC')
+    ax2.plot(wl, apc_fit(wl), linestyle='dashed', linewidth=3, color='xkcd:indigo', label='Fit')
+    ax2.set_xlabel(r'$Wavelength   (\AA)$')
+    ax2.set_ylabel('Aperture Correction')
+    ax2.set_ylim(y2min, y2max)
+    ax2.legend(bbox_to_anchor=(1.04, 1), borderaxespad=0)
 
     if plotfile:
         plt.savefig(plotfile)
