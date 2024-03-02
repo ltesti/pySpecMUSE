@@ -9,7 +9,7 @@ from photutils.aperture import CircularAperture, CircularAnnulus, ApertureStats
 
 from .aperturesplots import plotstars
 
-def get_centroids(imagefile, verbose=True, sigma=5.0, fwhm=4.5, thres=1., sigma_radius=2.):
+def get_centroids(imagefile, verbose=True, sigma=5.0, fwhm=4.5, thres=1., sigma_radius=2.0):
     #
     ima = fits.open(imagefile)  # datadir+'WFM_Tr14_long_6_Cousins_I_IMAGE_FOV.fits')
     data = ima['DATA'].data
@@ -24,7 +24,7 @@ def get_centroids(imagefile, verbose=True, sigma=5.0, fwhm=4.5, thres=1., sigma_
     #
     return np.transpose((sources['xcentroid'], sources['ycentroid'])), sources
 
-def get_stars_for_apc(starlis, mindist=10, magsat=-8, magperc=5, doplo=False, image=None, plotfile='f_stars_for_apc.pdf'):
+def get_stars_for_apc(starlis, mindist=10, magsat=-8, magperc=5, doplo=False, image=None, plotfile=None):
     #
     maxx = np.max(np.array([s.xcentroid for s in starlis]))
     maxy = np.max(np.array([s.ycentroid for s in starlis]))
@@ -53,8 +53,9 @@ def get_stars_for_apc(starlis, mindist=10, magsat=-8, magperc=5, doplo=False, im
     #
     if doplo:
         if image:
+            all_xy = np.transpose(([s.xcentroid for s in starlis], [s.ycentroid for s in starlis]))
             xy = np.transpose(([starlis[i].xcentroid for i in n_apc], [starlis[i].ycentroid for i in n_apc]))
-            plotstars(image, xy,
+            plotstars(image, xy, plotall=True, allpos=all_xy,
                       aprad=mindist, fileout=plotfile, mytitle='Aperture Correction Stars')
         else:
             print("ERROR: to plot the results, you need to pass also the image name image='filename'")
@@ -62,6 +63,19 @@ def get_stars_for_apc(starlis, mindist=10, magsat=-8, magperc=5, doplo=False, im
     return n_apc
 
 def do_apphot(in_ima, in_aper, in_annulus):
+    """Function to perform aperture photometry in one image
+
+    Function to perform aperture photometry in a set of apertures (and corresponding skies),
+    in an image. This is use as the base to perform extraction of the stellar spectra.
+    The function requires as input the image and the apertures (for phot and sky).
+    This function performs default sigmaclipping on the sky background
+
+    :param in_ima: (float array) image to perform the photometry on
+    :param in_aper: (CircularAperture) class defining the circular apertures
+    :param in_annulus: (CircularAnnulus) class defining the sky annuli
+
+    :return: magnitude, counts_background_subtracted, total_bkg_in_aperture, bkg_noise
+    """
 
     ### Perform Aperture Photometry
     sigclip = SigmaClip(sigma=3.0, maxiters=10)
@@ -71,14 +85,13 @@ def do_apphot(in_ima, in_aper, in_annulus):
     ### Extimate the bkg dubctracted flux
     total_bkg = bkg_stats.median * aper_stats.sum_aper_area.value
     apersum_bkgsub = aper_stats.sum - total_bkg
-    #print(apersum_bkgsub)
     mag=apersum_bkgsub * 0
     for elem in range(len(apersum_bkgsub)):
         if apersum_bkgsub[elem] > 0:
             mag[elem] = -2.5 * np.log10(apersum_bkgsub[elem]) + 25
         else:
             mag[elem] = 99.999
-    return mag
+    return mag, apersum_bkgsub, total_bkg, bkg_stats.std * aper_stats.sum_aper_area.value
 
 def runphot_ima_aps(positions, radii, sky_r1, sky_r2, data):
     apertures = []
@@ -86,16 +99,17 @@ def runphot_ima_aps(positions, radii, sky_r1, sky_r2, data):
         apertures.append(CircularAperture(positions, r=radii[i]))
     annulus_aperture = CircularAnnulus(positions, r_in=sky_r1, r_out=sky_r2)
     #
-    mag = []
+    phot_results = []
     for ap in apertures:
-        mag.append(do_apphot(data, ap, annulus_aperture))
-    return mag
+        phot_results.append(do_apphot(data, ap, annulus_aperture))
+    return phot_results
 
 def apc_spec_single_wl(args):
     # wrapper to get the apc spectra for apc_stars
     phot_for_apcorr = runphot_ima_aps(args[0], args[1],
                                       (args[2])[0], (args[2])[1],
                                       args[3])
+    phot_for_apcorr = [a[0] for a in phot_for_apcorr]
     return np.array(phot_for_apcorr[1] - phot_for_apcorr[0])
 
 def get_spec_single_wl(args):
@@ -105,9 +119,7 @@ def get_spec_single_wl(args):
     #      1 = radii (assumed to contain only one radius, in any case only the first radius is returned)
     #      2 = skyrad (list of two)
     #      3 = cube_data[iwl,:,:]  (image at the selected wavelength)
-    #      4 = apc_iwl (aperture correction)
     phot_for_apcorr = runphot_ima_aps(args[0], args[1],
                                       (args[2])[0], (args[2])[1],
                                       args[3])
-    return np.array(phot_for_apcorr[0] + args[4])
-
+    return np.array(phot_for_apcorr[0])

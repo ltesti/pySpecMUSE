@@ -2,42 +2,28 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-# import multiprocessing as mp
-# from astropy.io import fits
-# from photutils.aperture import CircularAperture, CircularAnnulus
-# import scipy.interpolate as ssi
-# import matplotlib.pyplot as plt
-# import os
-# from astropy.table import Table
+import matplotlib.pyplot as plt
+from astropy.visualization import simple_norm
+from photutils.aperture import CircularAperture
 
-# from .myphotutils import get_centroids, get_stars_for_apc, runphot_ima_aps
-# from .apc_plots import plot_curve_of_growth_iv, plot_apc
 from .utils import running_median_spec
+from .lines import line_integral, known_lines, lineplot
+from .star_plots import plot_star
 
 def apc_calc_single_star(args):
     # wrapper per calcolare in multiprocessing le apc
     # arg[0] = StarMUSE object
     # arg[1] = dictionary containing
     #    the two parameters: median filter box half_width and sigmaclip threshold (None = no sigla clip)
-    #    Example: {'hw_box' : hw_box, 'sclip' : 2.0}
+    #    Example: {'hw_box' : hw_box, 'sclip' : 2.0, 'maxiter' = 5}
 
-    star = args[0]
-    pars = args[1]
-    star.apc_med_hw_box = pars['hw_box']
-    if 'sclip' in pars.keys():
-        star.apc_med_sclip = pars['sclip']
+    if 'sclip' in (args[1]).keys():
+        sclip = (args[1])['sclip']
     else:
-        star.apc_med_sclip = None
+        sclip = None
 
-    star.apc_med = np.zeros(len(star.apc_wl))
-    star.apc_std = np.zeros(len(star.apc_wl))
-    star.apc_mean = np.zeros(len(star.apc_wl))
-
-    star.apc_med, star.apc_mean, star.apc_std = running_median_spec(star.apc_spec,
-                                                                    star.apc_med_hw_box,
-                                                                    sclip = star.apc_med_sclip)
-
-    return star
+    med_mean_std = running_median_spec(args[0], (args[1])['hw_box'], sclip = sclip, maxiter=(args[1])['maxiter'])
+    return med_mean_std
 
 
 class StarMUSE(object):
@@ -89,4 +75,48 @@ class StarMUSE(object):
         # Spectrum attributes
         self.has_spectrum = False
         self.wl = None
-        self.flux = None
+        self.magspec = None
+        self.spectrum = None
+        self.rms_spectrum = None
+        self.sky = None
+        self.sky_noise = None
+        self.corrected_magspec = None
+        self.corrected_spectrum = None
+        self.has_corrected_spectrum = False
+
+        # line measurements
+        self.has_lines = False
+        self.lines = {}
+
+    def plot_star_summary(self, images={'image_V': None, 'image_I': None}, figure_file=None):
+        #
+        plot_star(self, images=images, figure_file=figure_file)
+
+    def get_line(self, linepars=None):
+        #
+        if linepars:
+            if 'linename' not in linepars.keys():
+                linepars['linename'] = '[OI]6300'
+            if 'wlmin' not in linepars.keys():
+                linepars['wlmin'] = 6297
+            if 'wlmax' not in linepars.keys():
+                linepars['wlmax'] = 6303
+            if 'wlcont1' not in linepars.keys():
+                linepars['wlcont1'] = 6250
+            if 'wlcont2' not in linepars.keys():
+                linepars['wlcont2'] = 6350
+            if 'min_snr' not in linepars.keys():
+                linepars['min_snr'] = 3.
+            if 'doplot' not in linepars.keys():
+                linepars['doplot'] = 'True'
+            if 'plotsky' not in linepars.keys():
+                linepars['plotsky'] = 'True'
+            if 'conttype' not in linepars.keys():
+                linepars['conttype'] = 'median'
+            retdic = line_integral(self, linepars['wlmin'], linepars['wlmax'], 
+                                   linepars['wlcont1'], linepars['wlcont2'], 
+                                   min_snr=linepars['min_snr'], doplot=linepars['doplot'], 
+                                   plotsky=linepars['plotsky'], conttype=linepars['conttype'])
+            self.lines[linepars['linename']] = retdic
+        else:
+            pass

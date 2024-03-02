@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import os
 import numpy as np
 import matplotlib.pyplot as plt
 from .aperturesplots import plotstars
@@ -15,23 +14,18 @@ def plot_curve_of_growth_iv(radii, mag_i, mag_v, positions, file_i, file_v, gues
     mag_70 = -2.5*np.log10(0.7)
     #
     fig, ax = plt.subplots(3, 2, figsize=(12, 18))
-    #fig.subplots_adjust(hspace=0)
 
     plotstars(file_i, positions, ax=ax[0, 0], aprad=radii[-1], fileout=None)
     plotstars(file_v, positions, ax=ax[0, 1], aprad=radii[-1], fileout=None)
 
     ax[1, 0].plot(radii, mag_i)
     ax[1, 0].invert_yaxis()
-    # ax[0,0].set_xlabel('Aperture radius (pix)')
-    # ax[0].set_ylabel('Aperture Correction')
     ax[1, 0].set_ylabel('Mag')
     ax[1 ,0].set_title('Filter I')
 
     ax[1, 1].plot(radii, mag_v)
-    # ax[0,1].set_xlabel('Aperture (pix)')
     ax[1, 1].set_ylabel('Mag')
     ax[1, 1].set_title('Filter V')
-    # ax[0,1].set_ylim(10, 20)
     ax[1, 1].invert_yaxis()
 
     ax[2, 0].plot(radii, mag_i - mag_i[-1])
@@ -42,9 +36,7 @@ def plot_curve_of_growth_iv(radii, mag_i, mag_v, positions, file_i, file_v, gues
     ax[2, 0].plot([guessrad,guessrad], [0,2], linestyle='dashed',label='Ap radius {0:3.1f}'.format(guessrad))
     ax[2, 0].invert_yaxis()
     ax[2, 0].set_xlabel('Aperture radius (pix)')
-    # ax[0].set_ylabel('Aperture Correction')
     ax[2, 0].set_ylabel('Mag')
-    # ax[1, 0].set_title('Filter I')
     ax[2, 0].legend()
 
     ax[2, 1].plot(radii, mag_v - mag_v[-1])
@@ -55,17 +47,16 @@ def plot_curve_of_growth_iv(radii, mag_i, mag_v, positions, file_i, file_v, gues
     ax[2, 1].plot([guessrad,guessrad], [0,2], linestyle='dashed', label='Ap radius {0:3.1f}'.format(guessrad))
     ax[2, 1].set_xlabel('Aperture radius (pix)')
     ax[2, 1].set_ylabel('Mag')
-    # ax[1, 1].set_title('Filter V')
-    # ax[0,1].set_ylim(10, 20)
     ax[2, 1].invert_yaxis()
     ax[2, 1].legend()
 
     if plotfile:
         plt.savefig(plotfile)
 
-def plot_apc(wl, apc_cube, apc_med, apc_mean, apc_std, apc_med_30, nsig=None, plotfile=None):
+def plot_apc(wl, apc_cube, apc_med, apc_mean, apc_std, apc_med_30, apc_fit, nsig=None, plotfile=None):
 
-    fig, ax = plt.subplots(figsize=(20, 7))
+    fig, ((ax1), (ax2)) = plt.subplots(2, 1, figsize=(20, 7), sharey=False, sharex=True)
+    plt.subplots_adjust(right=0.7)
 
     if nsig:
         nsigma = nsig
@@ -74,18 +65,47 @@ def plot_apc(wl, apc_cube, apc_med, apc_mean, apc_std, apc_med_30, nsig=None, pl
 
     fig.suptitle('Aperture correction')
 
-    ax.plot(wl, apc_med, color='blue')
     #
-    ymin = np.percentile(apc_med_30, 0.1)
-    ymax = np.percentile(apc_med_30, 99.9)
-    ax.set_ylim(ymin, ymax)
-    ax.plot(wl, apc_mean, alpha=0.4, color='cyan')
-    ax.fill_between(wl, apc_med-nsigma*apc_std, apc_med+nsigma*apc_std, alpha=0.25, color='blue')
+    y1min = np.percentile(apc_fit(wl), 0.1) - (np.percentile(apc_fit(wl), 0.1)/1.3)*(np.percentile(apc_fit(wl), 0.1)/abs(np.percentile(apc_fit(wl), 0.1)))
+    y1max = np.percentile(apc_fit(wl), 99.9) + (np.percentile(apc_fit(wl), 99.9)/1.3)*(np.percentile(apc_fit(wl), 99.9)/abs(np.percentile(apc_fit(wl), 99.9)))
+    #y1min = np.percentile(apc_med_30, 0.1111)
+    #y1max = np.percentile(apc_med_30, 99.999999)
+    #y1max = 0
+    #y1min = -3
+    #y2max = np.percentile(apc_med_30, 99.999999) # For fields 13,
+    #y2min = np.percentile(apc_med_30, 0.1111)	# For fields 13,
+    y2max = 7
+    y2min= -5
+
+	#
+    ax1.fill_between(wl, apc_med-nsigma*apc_std, apc_med+nsigma*apc_std, alpha=0.25, color='xkcd:macaroni and cheese', label='Minimum to maximum errors of the AC curves')
     #
-    ax.plot(wl, apc_cube[:, 0], alpha=0.4, color='orange')
-    ax.plot(wl, np.nanmedian(apc_cube[:, 0]) * np.ones(len(wl)), color='green')
-    #axs[0].plot(wl, -apcorrmean * np.ones(len(wl)))
-    ax.plot(wl, apc_med_30, 'o', color='red')
+    ax1.plot(wl, apc_cube[:, 0], alpha=0.4, color='xkcd:pale purple', label= 'Minimum to maximum values of the AC curves')
+    ax1.plot(wl, np.nanmedian(apc_cube[:, 0]) * np.ones(len(wl)), color='xkcd:boring green', label='Median value')
+    ax1.plot(wl, apc_med_30, '.', color='xkcd:magenta', markersize=0.5) # alpha=0.3,
+    ax1.plot(5000, 20, '.', color='xkcd:magenta', markersize=0.5, label='Median 30 AC curves')
+    ax1.plot(wl, apc_mean, linestyle='solid', alpha=0.25, color='xkcd:soft pink', label='Mean AC') 
+    ax1.plot(wl, apc_med, linestyle='dashed', alpha=0.25, color='xkcd:sky blue', label='Median AC')
+    ax1.plot(wl, apc_fit(wl), linestyle='dashed', linewidth=3, color='xkcd:indigo', label='Fit')
+    ax1.set_xlabel(r'$Wavelength   (\AA)$')
+    ax1.set_ylabel('Aperture Correction')
+    ax1.set_ylim(y1min, y1max)
+    ax1.legend(bbox_to_anchor=(1.04, 1), borderaxespad=0)
+    
+    #
+    ax2.fill_between(wl, apc_med-nsigma*apc_std, apc_med+nsigma*apc_std, alpha=0.25, color='xkcd:macaroni and cheese', label='Minimum to maximum errors of the AC curves')
+    #
+    ax2.plot(wl, apc_cube[:, 0], alpha=0.4, color='xkcd:pale purple', label= 'Minimum to maximum values of the AC curves')
+    ax2.plot(wl, np.nanmedian(apc_cube[:, 0]) * np.ones(len(wl)), color='xkcd:boring green', label='Median value')
+    ax2.plot(wl, apc_med_30, '.', color='xkcd:magenta', markersize=0.5) # alpha=0.3,
+    ax2.plot(5000, 20, '.', color='xkcd:magenta', markersize=0.5, label='Median 30 AC curves')
+    ax2.plot(wl, apc_mean, linestyle='solid', alpha=0.25, color='xkcd:soft pink', label='Mean AC') 
+    ax2.plot(wl, apc_med, linestyle='dashed', alpha=0.25, color='xkcd:sky blue', label='Median AC')
+    ax2.plot(wl, apc_fit(wl), linestyle='dashed', linewidth=3, color='xkcd:indigo', label='Fit')
+    ax2.set_xlabel(r'$Wavelength   (\AA)$')
+    ax2.set_ylabel('Aperture Correction')
+    ax2.set_ylim(y2min, y2max)
+    ax2.legend(bbox_to_anchor=(1.04, 1), borderaxespad=0)
 
     if plotfile:
         plt.savefig(plotfile)
