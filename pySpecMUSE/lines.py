@@ -15,7 +15,7 @@ known_lines = [
       'min_snr' : 3., 'doplot' : False, 'plotsky' : False, 'conttype' : 'median' },
 ]
 
-def line_integral(Star, wlmin, wlmax, wlcont1, wlcont2, min_snr=3., 
+def line_integral(wl,fl,sky,skynoise, wlmin, wlmax, wlcont1, wlcont2, min_snr=3., 
                   doplot=False, plotsky=False, conttype='median', docontfitplot=False):
     '''
     Function to integrate the line and subtract the adjacent continuum
@@ -24,7 +24,7 @@ def line_integral(Star, wlmin, wlmax, wlcont1, wlcont2, min_snr=3.,
     if docontfitplot:
         doplot=False
 
-    mywl, myfl, mysky, myskynoise = get_vec(Star, wlcont1, wlcont2)
+    mywl, myfl, mysky, myskynoise = get_vec_new(wl,fl,sky,skynoise, wlcont1, wlcont2)
 
     nline = np.where((mywl>=wlmin) & (mywl<=wlmax))
     ncont = np.where(((mywl>=wlcont1) & (mywl<=wlmin)) |  ((mywl>=wlmax) & (mywl<=wlcont2)))
@@ -74,15 +74,26 @@ def line_integral(Star, wlmin, wlmax, wlcont1, wlcont2, min_snr=3.,
 
     return retdic
 
-def get_vec(Star, wl1, wl2):
-    nplot = np.where((Star.wl>=wl1) & (Star.wl<=wl2))
+# def get_vec(Star, wl1, wl2):
+#     nplot = np.where((Star.wl>=wl1) & (Star.wl<=wl2))
 
-    mywl = np.copy(Star.wl[nplot])
-    myfl = np.copy(Star.corrected_spectrum[nplot])
-    mysky = np.copy(Star.sky[nplot])
-    myskynoise = np.copy(Star.sky_noise[nplot])
+#     mywl = np.copy(Star.wl[nplot])
+#     myfl = np.copy(Star.corrected_spectrum[nplot])
+#     mysky = np.copy(Star.sky[nplot])
+#     myskynoise = np.copy(Star.sky_noise[nplot])
+#     #
+#     return mywl, myfl, mysky, myskynoise
+
+def get_vec_new(wl,fl,sky,skynoise, wl1, wl2):
+    nplot = np.where((wl>=wl1) & (wl<=wl2))
+
+    mywl = np.copy(wl[nplot])
+    myfl = np.copy(fl[nplot])
+    mysky = np.copy(sky[nplot])
+    myskynoise = np.copy(skynoise[nplot])
     #
     return mywl, myfl, mysky, myskynoise
+
 
 
 def lineplot(lp, plotsky=True):
