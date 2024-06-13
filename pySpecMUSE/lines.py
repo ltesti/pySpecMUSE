@@ -38,7 +38,7 @@ def line_integral(wl,fl,sky,skynoise, wlmin, wlmax, wlcont1, wlcont2, min_snr=3.
         cont = np.zeros(len(mywl))+np.median(myfl[ncont])
         
     myflsub = myfl-cont
-    spec_rms = np.std(myflsub)
+    spec_rms = np.std(myflsub[ncont])
     fline_max = np.max(myflsub[nline])
     if fline_max/spec_rms >= min_snr:
         fint = (myflsub[nline]).sum()*(mywl[1]-mywl[0])
