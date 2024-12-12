@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import numpy as np
-import matplotlib.pyplot as plt
-from astropy.visualization import simple_norm
-from photutils.aperture import CircularAperture
+#import numpy as np
+#import matplotlib.pyplot as plt
+#from astropy.visualization import simple_norm
+#from photutils.aperture import CircularAperture
 
 from .utils import running_median_spec
 from .lines import line_integral, known_lines, lineplot
