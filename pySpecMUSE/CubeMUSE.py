@@ -372,7 +372,8 @@ class CubeMUSE(object):
                 self.apc_mean[i] = mean
                 self.apc_std[i] = std
 
-        self.apc_fit = np.poly1d(np.polyfit(self.wl, self.apc_mean, self.apc_fit_order))
+        nn = np.where(np.isfinite(self.apc_mean) == True)
+        self.apc_fit = np.poly1d(np.polyfit(self.wl[nn], self.apc_mean[nn], self.apc_fit_order))
 
         if doplo_apc:
             self.plotfile_apc_specra = self.figdir + os.path.split(plotfile)[1]
