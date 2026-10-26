@@ -1,1 +1,6 @@
 Code to perform stellar spectra extraction from the MUSE cubes for the Carina project. Originally developed for the Tr14 Carina MUSE project by Giuseppe Milazzo, Dominika Itrich, Giacomo Beccari, Katia Gkimisi, and Leonardo Testi.
+
+The development of this software was partially supported by the
+European Union’s Horizon 2020 research and innovation programme through
+the European Research Council (ERC) ERC Synergy Grant ECOGAL (grant
+855130).
