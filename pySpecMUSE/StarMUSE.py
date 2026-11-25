@@ -36,10 +36,10 @@ class StarMUSE(object):
 
         Example:
             starpars = {
-                'xcentroid' : posline['xcentroid'],
-                'ycentroid' : posline['ycentroid'],
+                'x_centroid' : posline['x_centroid'],
+                'y_centroid' : posline['y_centroid'],
                 'mag' : posline['mag'],
-                'skycoo' : self.wcs.pixel_to_world(posline['xcentroid'], posline['ycentroid'])
+                'skycoo' : self.wcs.pixel_to_world(posline['x_centroid'], posline['y_centroid'])
             }
         """
 
@@ -52,8 +52,8 @@ class StarMUSE(object):
 
         try :
             self.id = self.starpars['star_id']
-            self.xcentroid = self.starpars['xcentroid']
-            self.ycentroid = self.starpars['ycentroid']
+            self.x_centroid = self.starpars['x_centroid']
+            self.y_centroid = self.starpars['y_centroid']
             self.daofind_mag = self.starpars['mag']
             self.skycoo = self.starpars['skycoo']
 

@@ -22,13 +22,15 @@ def get_centroids(imagefile, verbose=True, sigma=5.0, fwhm=4.5, thres=1., sigma_
     for col in sources.colnames:
         sources[col].info.format = '%.8g'  # for consistent table output
     #
-    return np.transpose((sources['xcentroid'], sources['ycentroid'])), sources
+    return np.transpose((sources['x_centroid'], sources['y_centroid'])), sources
 
-def get_stars_for_apc(starlis, mindist=10, magsat=-8, magperc=5, doplo=False, image=None, plotfile=None):
+def get_stars_for_apc(starlis, mindist=10, magsat=-8, magperc=15, doplo=False, image=None, plotfile=None):
     #
-    maxx = np.max(np.array([s.xcentroid for s in starlis]))
-    maxy = np.max(np.array([s.ycentroid for s in starlis]))
+    maxx = np.max(np.array([s.x_centroid for s in starlis]))
+    maxy = np.max(np.array([s.y_centroid for s in starlis]))
     allmags = np.array([s.daofind_mag for s in starlis])
+    #for i in range(len(starlis)):
+    #    print("Star {0}: x={1}, y={2}, mag={3} ... x={4}, y={5}, mag={6}".format(i, starlis[i].x_centroid, starlis[i].y_centroid, starlis[i].daofind_mag, maxx, maxy, allmags[i]))
     mindist2 = mindist*mindist
     n_apc = []
     for i in range(len(starlis)):
@@ -36,16 +38,17 @@ def get_stars_for_apc(starlis, mindist=10, magsat=-8, magperc=5, doplo=False, im
         isolated = True
         for s2 in starlis:
             if s2.id != s1.id:
-                dx2 = (s1.xcentroid - s2.xcentroid) ** 2
-                dy2 = (s1.ycentroid - s2.ycentroid) ** 2
+                dx2 = (s1.x_centroid - s2.x_centroid) ** 2
+                dy2 = (s1.y_centroid - s2.y_centroid) ** 2
                 if (dx2+dy2) < mindist2:
                     isolated = False
-        if (isolated & (s1.xcentroid >= mindist) &
-            (s1.xcentroid <= maxx-mindist) &
-            (s1.ycentroid >= mindist) &
-            (s1.ycentroid <= maxy-mindist) &
-            (s1.daofind_mag <= np.percentile(allmags, magperc)) &
-            (s1.daofind_mag >= magsat)) :
+        if (isolated & (s1.x_centroid >= mindist)
+            & (s1.x_centroid <= maxx-mindist)
+            & (s1.y_centroid >= mindist)
+            & (s1.y_centroid <= maxy-mindist)
+            & (s1.daofind_mag <= np.nanpercentile(allmags, magperc))
+            & (s1.daofind_mag >= magsat)
+            ) :
                 s1.apc_star = True
                 n_apc.append(i)
 
@@ -53,13 +56,16 @@ def get_stars_for_apc(starlis, mindist=10, magsat=-8, magperc=5, doplo=False, im
     #
     if doplo:
         if image:
-            all_xy = np.transpose(([s.xcentroid for s in starlis], [s.ycentroid for s in starlis]))
-            xy = np.transpose(([starlis[i].xcentroid for i in n_apc], [starlis[i].ycentroid for i in n_apc]))
+            all_xy = np.transpose(([s.x_centroid for s in starlis], [s.y_centroid for s in starlis]))
+            xy = np.transpose(([starlis[i].x_centroid for i in n_apc], [starlis[i].y_centroid for i in n_apc]))
             plotstars(image, xy, plotall=True, allpos=all_xy,
                       aprad=mindist, fileout=plotfile, mytitle='Aperture Correction Stars')
         else:
             print("ERROR: to plot the results, you need to pass also the image name image='filename'")
     #
+    #print ("Identified {0} stars with mag>={1} for ApC\n".format(len(n_apc), magsat))
+    #for i in range(len(n_apc)):
+    #    print("Star {0}: x={1}, y={2}, mag={3}, {4}, {5}".format(n_apc[i], starlis[n_apc[i]].x_centroid, starlis[n_apc[i]].y_centroid, starlis[n_apc[i]].daofind_mag, magsat, starlis[n_apc[i]].daofind_mag>= magsat))
     return n_apc
 
 def do_apphot(in_ima, in_aper, in_annulus):

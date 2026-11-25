@@ -10,7 +10,7 @@ from photutils.aperture import CircularAperture
 
 def plot_star(Star, images={'image_V': None, 'image_I': None}, figure_file=None):
     #
-    aperture = CircularAperture([Star.xcentroid, Star.ycentroid], r=3)
+    aperture = CircularAperture([Star.x_centroid, Star.y_centroid], r=3)
     #
     fig, ax = plt.subplot_mosaic([
         ['I', 'I', 'V', 'V'],
@@ -72,7 +72,7 @@ def plot_star(Star, images={'image_V': None, 'image_I': None}, figure_file=None)
                                 Star.corrected_spectrum[nlab] + Star.rms_spectrum[nlab],
                                 color='r', linestyle='solid', alpha=0.2)
         #
-        ax[lab].set_xlabel('Wavelength ($\AA$)')
+        ax[lab].set_xlabel(r'Wavelength ($\AA$)')
         ax[lab].set_title(plotlabel[lab])
         ax[lab].set_xlim(plotlims[lab][0], plotlims[lab][1])
         ax[lab].set_yscale(plotscale[lab])

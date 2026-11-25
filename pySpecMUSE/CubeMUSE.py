@@ -77,7 +77,7 @@ class CubeMUSE(object):
             if 'saturation_magnitude' in self.params.keys():
                 self.magsat = self.params['saturation_magnitude']
             else:
-                self.magsat = -8.0
+                self.magsat = -10.0
 
             self.set_parameters()
             self.set_cubewcs()
@@ -185,12 +185,12 @@ class CubeMUSE(object):
                 mycoo = SkyCoord((self.sources_i[i])['ALPHA_J2000'], (self.sources_i[i])['DELTA_J2000'], unit="deg")
                 star_id = 'f'+str(self.pointing_code)+'_'+str((self.sources_i[i])['NUMBER'])
             else:
-                mycoo = mywcs.pixel_to_world((self.sources_i[i])['xcentroid'], (self.sources_i[i])['ycentroid'], 0)
+                mycoo = mywcs.pixel_to_world((self.sources_i[i])['x_centroid'], (self.sources_i[i])['y_centroid'], 0)
                 star_id = 'f'+str(self.pointing_code)+'_'+str(istar)
             starpars = {
                 'star_id' : star_id,
-                'xcentroid' : (self.sources_i[i])['xcentroid'],
-                'ycentroid' : (self.sources_i[i])['ycentroid'],
+                'x_centroid' : (self.sources_i[i])['x_centroid'],
+                'y_centroid' : (self.sources_i[i])['y_centroid'],
                 'mag' : (self.sources_i[i])['mag'],
                 'skycoo' : mycoo
             }
@@ -209,10 +209,10 @@ class CubeMUSE(object):
         if 'file_pos' in self.params.keys():
             self.file_pos = self.params['file_pos']
             self.sources_i = Table.read(self.datadir+self.file_pos,format='csv')
-            self.sources_i.rename_column('X_IMAGE', 'xcentroid')
-            self.sources_i.rename_column('Y_IMAGE', 'ycentroid')
+            self.sources_i.rename_column('X_IMAGE', 'x_centroid')
+            self.sources_i.rename_column('Y_IMAGE', 'y_centroid')
             self.sources_i.rename_column('MAG_APER', 'mag')
-            self.positions_i = np.transpose((self.sources_i['xcentroid'], self.sources_i['ycentroid']))
+            self.positions_i = np.transpose((self.sources_i['x_centroid'], self.sources_i['y_centroid']))
             self.stars_from_file = True
         else:
             self.positions_i, self.sources_i = get_centroids(self.file_i_image, thres=self.daofind_threshold, sigma_radius=self.daofind_sigma_radius)
@@ -220,8 +220,9 @@ class CubeMUSE(object):
         #
         self.has_centroids =True
 
-    def set_stars_for_apc(self, mindist=10, magperc=8,
-                          doplo=True, image=None, plotfile='f_stars_for_apc.pdf'):
+    def set_stars_for_apc(self, mindist=10, magperc=20,
+                          doplo=True, image=None, plotfile='f_stars_for_apc.pdf',
+                          verbose='True'):
         """Select ApC stars
 
         Function to identify the APC stars in the field.
@@ -242,6 +243,8 @@ class CubeMUSE(object):
                                        doplo=doplo, image=image, plotfile=self.plotfile_apc_stars)
 
         self.apc_stars = [self.stars[i] for i in self.n_apc]
+        if verbose:
+            print("Identified {0} stars with mag>={1} for ApC in pointing {2}\n".format(len(self.n_apc), self.magsat, self.pointing_code))
 
         self.has_apc_stars = True
 
@@ -329,7 +332,7 @@ class CubeMUSE(object):
         self.has_apc_values = True
 
     def analyse_apc_spectra(self, radii=(3.,10.), skyrad=(10,15), apc_fit_order=3, hw_box_median=50, sclip_median=3.0,
-                       apc_sclip=2.0, sclip_niter=5, doplo_apc=True, plotfile='f_apc_values.pdf'):
+                       apc_sclip=2.0, sclip_niter=5, min_points_sclip=3, doplo_apc=True, plotfile='f_apc_values.pdf'):
 
         if not self.has_apc_stars:
              self.set_stars_for_apc()
@@ -349,7 +352,7 @@ class CubeMUSE(object):
         self._run_apc_proc_mp({'hw_box' : hw_box_median, 'sclip' : sclip_median, 'maxiter' : sclip_niter})
 
         for i in range(len(self.n_apc)):
-            self.apc_med_30[:,i] = self.apc_stars[i].apc_med
+            self.apc_med_30[:, i] = self.apc_stars[i].apc_med
             self.apc_mean_30[:, i] = self.apc_stars[i].apc_mean
             self.apc_std_30[:, i] = self.apc_stars[i].apc_std
 
@@ -364,13 +367,15 @@ class CubeMUSE(object):
                 std = self.apc_std[i]
                 while (iter<sclip_niter):
                     ng = np.where((self.apc_med_30[i, :] - med)**2 < (apc_sclip * std)**2)
+                    if len(ng[0]) < min_points_sclip:
+                        break
                     med = np.nanmedian(self.apc_med_30[i, ng], axis=1)
                     mean = np.nanmean(self.apc_mean_30[i, ng], axis=1)
                     std = np.nanstd(self.apc_med_30[i, ng], axis=1)
                     iter += 1
-                self.apc_med[i] = med
-                self.apc_mean[i] = mean
-                self.apc_std[i] = std
+                self.apc_med[i] = med[0]
+                self.apc_mean[i] = mean[0]
+                self.apc_std[i] = std[0]
 
         nn = np.where(np.isfinite(self.apc_mean) == True)
         self.apc_fit = np.poly1d(np.polyfit(self.wl[nn], self.apc_mean[nn], self.apc_fit_order))
