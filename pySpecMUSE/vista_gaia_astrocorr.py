@@ -1,0 +1,620 @@
+"""
+vista_gaia_astrocorr.py
+=======================
+Astrometric registration of a VISTA source catalog onto the Gaia DR3 frame.
+
+Workflow
+--------
+Stage 1 — Initial cross-match
+    Load a VISTA catalog, select a cone, query Gaia DR3, match at a user-
+    supplied maximum separation, compute median ΔRA / ΔDec and their σ.
+
+Stage 2 — Corrected cross-match + radius refinement
+    Apply Stage-1 offsets to VISTA coordinates, repeat the cross-match,
+    then use the separation histogram to find a tighter "reliable" radius
+    (the first local minimum to the right of the peak, i.e. the valley
+    between true matches and the random-match background).
+
+Stage 3 — Final offsets on original coordinates
+    Re-derive ΔRA / ΔDec using the *original* VISTA coordinates and the
+    reliable-match subset, so the corrections are self-consistent.
+
+Output
+------
+  * ASCII table: original VISTA columns + RA_CORR, DE_CORR
+  * Multi-panel diagnostic PDF/PNG
+
+Usage (as a script)
+-------------------
+    python vista_gaia_astrocorr.py \\
+        --vista   J_A+A_572_A116_catalog.dat.gz.fits \\
+        --ra      160.96   --dec  -59.535 \\
+        --radius  0.6      --max_sep  3.0
+
+Usage (as a module)
+-------------------
+    from vista_gaia_astrocorr import run_pipeline
+    result = run_pipeline(
+        vista_file="...", ra_center=160.96, dec_center=-59.535,
+        radius_deg=0.6,  max_sep_arcsec=3.0
+    )
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")          # non-interactive; remove for interactive use
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+
+import astropy.io.ascii as aio
+from astropy.io import fits
+from astropy.table import Table, Column
+from astropy.coordinates import SkyCoord
+import astropy.units as u
+from astroquery.gaia import Gaia
+from scipy.signal import argrelmin
+
+
+# ── Gaia DR3 setup ────────────────────────────────────────────────────────────
+# Set the default table so that any helper method that uses MAIN_GAIA_TABLE
+# also hits DR3.  The actual query in query_gaia_dr3() uses explicit ADQL so
+# it is not affected by version differences in how this attribute is handled.
+Gaia.MAIN_GAIA_TABLE = "gaiadr3.gaia_source"
+Gaia.ROW_LIMIT = -1          # return all rows (some astroquery versions cap at 2000)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Coordinate parsing helper (from CorrelationVISTA.ipynb)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def src_coo(name: str, verbose: bool = False) -> tuple[float, float]:
+    """
+    Parse a sexagesimal source name of the form
+        HHMMSSsss±DDMMSSs
+    and return (RA, Dec) in decimal degrees.
+    """
+    rah = name[0:2];  ram = name[2:4];  ras = name[4:9]
+    deg = name[9:12]; dem = name[12:14]; des = name[14:17]
+    if verbose:
+        print(f"{name}  ra={rah}:{ram}:{ras}  de={deg}:{dem}:{des}")
+    sgd = -1 if name[9] == "-" else 1.0
+    ra  = 15.0 * (float(rah) + (float(ram) + float(ras) / 60.0) / 60.0)
+    dec = sgd  * (abs(float(deg)) + (float(dem) + float(des) / 60.0) / 60.0)
+    return ra, dec
+
+
+def add_coords_from_name(tab: Table,
+                          name_col: str = "Name") -> Table:
+    """
+    Add RA_VISTA / DE_VISTA columns by parsing the name column with src_coo.
+    Returns modified table (in-place).
+    """
+    n = len(tab)
+    vra = np.zeros(n)
+    vde = np.zeros(n)
+    for i in range(n):
+        vra[i], vde[i] = src_coo(str(tab[i][name_col]))
+    tab["RA_VISTA"] = vra
+    tab["DE_VISTA"] = vde
+    return tab
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Core pipeline helpers
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def select_cone(tab: Table,
+                ra_center: float, dec_center: float,
+                radius_deg: float,
+                ra_col: str = "RA_VISTA",
+                dec_col: str = "DE_VISTA") -> Table:
+    """
+    Return the sub-table of rows within *radius_deg* of (ra_center, dec_center).
+    """
+    coo_all = SkyCoord(ra=np.array(tab[ra_col]) * u.deg,
+                       dec=np.array(tab[dec_col]) * u.deg)
+    ctr = SkyCoord(ra=ra_center * u.deg, dec=dec_center * u.deg)
+    sel = ctr.separation(coo_all).deg <= radius_deg
+    n_sel = sel.sum()
+    print(f"  Cone selection: {n_sel} / {len(tab)} VISTA sources within "
+          f"{radius_deg:.3f} deg of ({ra_center:.4f}, {dec_center:+.4f})")
+    return tab[sel]
+
+
+def query_gaia_dr3(ra_center: float, dec_center: float,
+                   radius_deg: float) -> Table:
+    """
+    Retrieve Gaia DR3 sources within a cone of *radius_deg* around
+    (ra_center, dec_center) using an explicit ADQL query.
+
+    Using launch_job_async + ADQL is more reliable than query_object_async
+    because it bypasses version-specific behaviour of MAIN_GAIA_TABLE and
+    any default row-limit caps.  The columns returned are those used by the
+    astrometric pipeline; add or remove as needed.
+    """
+    adql = f"""
+    SELECT
+        source_id, ra, dec,
+        parallax, parallax_error, parallax_over_error,
+        pmra, pmra_error,
+        pmdec, pmdec_error,
+        phot_g_mean_mag, ruwe
+    FROM gaiadr3.gaia_source
+    WHERE CONTAINS(
+        POINT('ICRS', ra, dec),
+        CIRCLE('ICRS', {ra_center:.8f}, {dec_center:.8f}, {radius_deg:.8f})
+    ) = 1
+    """
+    print(f"  Querying Gaia DR3 — cone r={radius_deg:.4f} deg "
+          f"centred ({ra_center:.4f}, {dec_center:+.4f}) …")
+    print(f"  (using launch_job_async / ADQL against gaiadr3.gaia_source)")
+    job      = Gaia.launch_job_async(adql, verbose=False)
+    tab_gaia = job.get_results()
+    if tab_gaia is None or len(tab_gaia) == 0:
+        raise RuntimeError(
+            "Gaia DR3 query returned no results.  Check:\n"
+            "  • network/proxy access to gea.esac.esa.int\n"
+            "  • ra_center / dec_center are inside the survey footprint\n"
+            "  • radius_deg is not so large the query times out (try < 1 deg)"
+        )
+    print(f"  → {len(tab_gaia):,} Gaia DR3 sources retrieved.")
+    return tab_gaia
+
+
+def cross_match(src_ra: np.ndarray, src_dec: np.ndarray,
+                ref_ra: np.ndarray, ref_dec: np.ndarray,
+                max_sep_arcsec: float
+                ) -> tuple[np.ndarray, np.ndarray,
+                           np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Nearest-neighbour match of (src_ra, src_dec) → (ref_ra, ref_dec).
+
+    Returns
+    -------
+    idx_ref   : int array, index into ref catalog for each src source
+    sep_arcsec: float array, angular separation in arcsec
+    dra       : float array, ΔRA  = (ref − src) × 3600  [arcsec]
+    ddec      : float array, ΔDec = (ref − src) × 3600  [arcsec]
+    good      : bool array, True where sep ≤ max_sep_arcsec
+    """
+    coo_src = SkyCoord(ra=src_ra  * u.deg, dec=src_dec  * u.deg)
+    coo_ref = SkyCoord(ra=ref_ra  * u.deg, dec=ref_dec  * u.deg)
+    idx_ref, sep, _ = coo_src.match_to_catalog_sky(coo_ref)
+    dra  = 3600.0 * (ref_ra[idx_ref]  - src_ra)
+    ddec = 3600.0 * (ref_dec[idx_ref] - src_dec)
+    good = sep.arcsec <= max_sep_arcsec
+    return idx_ref, sep.arcsec, dra, ddec, good
+
+
+def offset_stats(dra: np.ndarray, ddec: np.ndarray,
+                 mask: np.ndarray,
+                 label: str = "") -> tuple[float, float, float, float]:
+    """
+    Compute and print median offsets and their standard deviations.
+
+    Returns
+    -------
+    (dra_med, dra_std, ddec_med, ddec_std)  all in arcsec
+    """
+    dr = dra[mask]; dd = ddec[mask]
+    dra_med,  dra_std  = float(np.median(dr)), float(np.std(dr))
+    ddec_med, ddec_std = float(np.median(dd)), float(np.std(dd))
+    print(f"  [{label}]  N={mask.sum():6d}  "
+          f"ΔRA = {dra_med:+.4f} ± {dra_std:.4f}\"  "
+          f"ΔDec = {ddec_med:+.4f} ± {ddec_std:.4f}\"")
+    return dra_med, dra_std, ddec_med, ddec_std
+
+
+def find_reliable_radius(sep: np.ndarray,
+                         nbins: int = 100,
+                         fallback_fraction: float = 0.15
+                         ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Determine a reliable association radius from the separation histogram.
+
+    The algorithm finds the first local minimum to the right of the histogram
+    peak — the valley between true (Rayleigh-distributed) matches and the flat
+    random-match background.  If no local minimum is found, falls back to the
+    first bin where the count drops below *fallback_fraction* × peak.
+
+    Returns
+    -------
+    r_reliable : float, arcsec
+    counts     : histogram counts
+    edges      : histogram bin edges
+    centers    : bin centres
+    """
+    counts, edges = np.histogram(sep, bins=nbins, range=(0.0, sep.max()))
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    peak_i  = int(np.argmax(counts))
+
+    # local minima strictly to the right of the peak
+    local_min = argrelmin(counts[peak_i:], order=3)[0]
+    if len(local_min) > 0:
+        r_reliable = float(centers[peak_i + local_min[0]])
+    else:
+        threshold  = fallback_fraction * counts[peak_i]
+        after_peak = np.where(counts[peak_i:] < threshold)[0]
+        r_reliable = (float(centers[peak_i + after_peak[0]])
+                      if len(after_peak) else float(centers[-1]))
+
+    return r_reliable, counts, edges, centers
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Diagnostic plots
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _separation_panel(ax, sep, max_sep, r_reliable=None,
+                      nbins=80, title="", color_hist="steelblue"):
+    """Single-axis separation histogram."""
+    rng = (0.0, max_sep)
+    n, b, _ = ax.hist(sep[sep <= max_sep], bins=nbins, range=rng,
+                      color=color_hist, alpha=0.7, histtype="stepfilled",
+                      edgecolor="none")
+    ax.hist(sep[sep <= max_sep], bins=nbins, range=rng,
+            histtype="step", color="k", linewidth=0.8)
+    if r_reliable is not None:
+        ax.axvline(r_reliable, color="crimson", linewidth=1.5,
+                   linestyle="--", label=f"reliable: {r_reliable:.2f}\"")
+        ax.legend(fontsize=8)
+    ax.set_xlabel("Separation (arcsec)", fontsize=9)
+    ax.set_ylabel("N", fontsize=9)
+    ax.set_title(title, fontsize=9)
+
+
+def _offset_panel(ax, dra, ddec, good,
+                  r1=None, r2=None,
+                  xlim=(-6, 6), ylim=(-3, 3), title=""):
+    """RA vs Dec offset scatter plot (colour-coded by quality)."""
+    ax.plot(dra[good], ddec[good], ".", color="steelblue",
+            alpha=0.4, markersize=2, label="matched")
+    if r1 is not None:
+        ax.axvline(0, color="grey", linewidth=0.5, linestyle=":")
+        ax.axhline(0, color="grey", linewidth=0.5, linestyle=":")
+    ax.set_xlim(*xlim); ax.set_ylim(*ylim)
+    ax.set_xlabel(r"$\Delta$RA (arcsec)", fontsize=9)
+    ax.set_ylabel(r"$\Delta$Dec (arcsec)", fontsize=9)
+    ax.set_title(title, fontsize=9)
+
+
+def _offset_hist_panel(ax, dra, ddec, good, half_range=3.0, nbins=60, title=""):
+    """Overlapping ΔRA / ΔDec histograms."""
+    rng = (-half_range, half_range)
+    ax.hist(dra[good],  bins=nbins, range=rng,
+            color="steelblue", alpha=0.5, label=r"$\Delta$RA")
+    ax.hist(ddec[good], bins=nbins, range=rng,
+            color="tomato",    alpha=0.5, label=r"$\Delta$Dec")
+    ax.axvline(np.median(dra[good]),  color="steelblue",
+               linewidth=1.5, linestyle="--")
+    ax.axvline(np.median(ddec[good]), color="tomato",
+               linewidth=1.5, linestyle="--")
+    ax.set_xlim(*rng)
+    ax.set_xlabel("Offset (arcsec)", fontsize=9)
+    ax.set_ylabel("N", fontsize=9)
+    ax.legend(fontsize=8)
+    ax.set_title(title, fontsize=9)
+
+
+def make_diagnostic_figure(
+        # Stage 1
+        sep1, dra1, ddec1, good1, max_sep,
+        dra1_med, dra1_std, ddec1_med, ddec1_std,
+        # Stage 2
+        sep2, dra2, ddec2, good2, r_reliable,
+        dra2_med, dra2_std, ddec2_med, ddec2_std,
+        # Stage 3
+        sep3, dra3, ddec3, good3,
+        dra3_med, dra3_std, ddec3_med, ddec3_std,
+        # misc
+        output_path: str | Path | None = None
+        ) -> plt.Figure:
+    """
+    Three-row, three-column diagnostic figure.
+
+    Row 1 — Stage 1 (initial cross-match, max_sep radius)
+    Row 2 — Stage 2 (corrected coords, max_sep radius, reliable radius marked)
+    Row 3 — Stage 3 (original coords, reliable radius)
+    """
+    fig = plt.figure(figsize=(18, 15))
+    fig.suptitle("VISTA → Gaia DR3 astrometric correction", fontsize=13,
+                 fontweight="bold", y=0.99)
+    gs = gridspec.GridSpec(3, 3, figure=fig,
+                           hspace=0.42, wspace=0.32,
+                           left=0.07, right=0.97, top=0.95, bottom=0.06)
+
+    offset_half = min(3.0 * max(abs(dra1_med) + 3*dra1_std,
+                                abs(ddec1_med) + 3*ddec1_std), max_sep)
+
+    rows = [
+        # (sep, dra, ddec, good, r_rel, dra_m, dra_s, ddec_m, ddec_s, label)
+        (sep1, dra1, ddec1, good1, None,
+         dra1_med, dra1_std, ddec1_med, ddec1_std,
+         "Stage 1 — initial"),
+        (sep2, dra2, ddec2, good2, r_reliable,
+         dra2_med, dra2_std, ddec2_med, ddec2_std,
+         "Stage 2 — corrected coords"),
+        (sep3, dra3, ddec3, good3, r_reliable,
+         dra3_med, dra3_std, ddec3_med, ddec3_std,
+         "Stage 3 — final (original coords, reliable radius)"),
+    ]
+
+    for row_i, (sep, dra, ddec, good, r_rel,
+                dm_r, ds_r, dm_d, ds_d, lbl) in enumerate(rows):
+        ax0 = fig.add_subplot(gs[row_i, 0])
+        ax1 = fig.add_subplot(gs[row_i, 1])
+        ax2 = fig.add_subplot(gs[row_i, 2])
+
+        colors = ["steelblue", "mediumseagreen", "darkorange"]
+
+        _separation_panel(
+            ax0, sep, max_sep,
+            r_reliable=r_rel,
+            title=f"{lbl}\nN_matched = {good.sum():,}",
+            color_hist=colors[row_i])
+
+        _offset_panel(
+            ax1, dra, ddec, good,
+            xlim=(-offset_half * 1.5, offset_half * 1.5),
+            ylim=(-offset_half * 1.5, offset_half * 1.5),
+            title=f"ΔRA={dm_r:+.3f}\"±{ds_r:.3f}\"   "
+                  f"ΔDec={dm_d:+.3f}\"±{ds_d:.3f}\"")
+
+        _offset_hist_panel(
+            ax2, dra, ddec, good,
+            half_range=offset_half * 1.5,
+            title=f"ΔRA (blue) / ΔDec (red)  medians dashed")
+
+    if output_path is not None:
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+        print(f"  Diagnostic figure saved → {output_path}")
+
+    return fig
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Main pipeline
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def run_pipeline(
+        vista_file:      str,
+        ra_center:       float,
+        dec_center:      float,
+        radius_deg:      float,
+        max_sep_arcsec:  float  = 3.0,
+        ra_col:          str    = "RA_VISTA",
+        dec_col:         str    = "DE_VISTA",
+        parse_coords:    bool   = False,
+        name_col:        str    = "Name",
+        gaia_ra_col:     str    = "ra",
+        gaia_dec_col:    str    = "dec",
+        output_file:     str    = "vista_corrected.dat",
+        plot_file:       str    = "vista_gaia_diagnostic.pdf",
+        hist_nbins:      int    = 100,
+        ) -> dict:
+    """
+    Run the full astrometric correction pipeline.
+
+    Parameters
+    ----------
+    vista_file      : Path to the VISTA catalog (FITS or ASCII).
+    ra_center       : Field centre RA  (deg, J2000).
+    dec_center      : Field centre Dec (deg, J2000).
+    radius_deg      : Cone radius for source selection (deg).
+    max_sep_arcsec  : Initial cross-match radius (arcsec).
+    ra_col / dec_col: Column names for VISTA RA/Dec.
+                      Ignored when parse_coords=True.
+    parse_coords    : If True, parse coordinates from *name_col* via src_coo().
+    name_col        : Source name column (used when parse_coords=True).
+    gaia_ra_col     : Gaia RA  column name (default "ra").
+    gaia_dec_col    : Gaia Dec column name (default "dec").
+    output_file     : Path for the output corrected catalog.
+    plot_file       : Path for the diagnostic figure (PDF/PNG).
+    hist_nbins      : Number of bins for the separation histogram.
+
+    Returns
+    -------
+    dict with keys:
+        "table"            : corrected VISTA astropy.Table
+        "dra_final_arcsec" : final ΔRA  offset applied (arcsec)
+        "dra_final_std"    : its standard deviation (arcsec)
+        "ddec_final_arcsec": final ΔDec offset applied (arcsec)
+        "ddec_final_std"   : its standard deviation (arcsec)
+        "r_reliable_arcsec": reliable association radius (arcsec)
+        "figure"           : matplotlib Figure
+    """
+
+    # ── 0. Load VISTA catalog ─────────────────────────────────────────────────
+    print("\n━━━ Loading VISTA catalog ━━━")
+    ext = Path(vista_file).suffix.lower()
+    if ext in (".fits", ".gz"):
+        tab_vista_full = Table.read(vista_file, format="fits")
+    else:
+        tab_vista_full = Table.read(vista_file, format="ascii")
+    print(f"  Loaded {len(tab_vista_full):,} sources from {vista_file}")
+
+    if parse_coords:
+        print(f"  Parsing coordinates from column '{name_col}' …")
+        tab_vista_full = add_coords_from_name(tab_vista_full, name_col)
+        ra_col, dec_col = "RA_VISTA", "DE_VISTA"
+
+    # ── 1. Cone selection ─────────────────────────────────────────────────────
+    print("\n━━━ Stage 0 — Cone selection ━━━")
+    tab_vista = select_cone(tab_vista_full,
+                             ra_center, dec_center, radius_deg,
+                             ra_col=ra_col, dec_col=dec_col)
+    if len(tab_vista) == 0:
+        raise ValueError("No VISTA sources in the specified cone.")
+
+    vista_ra  = np.array(tab_vista[ra_col],  dtype=float)
+    vista_dec = np.array(tab_vista[dec_col], dtype=float)
+
+    # ── 2. Query Gaia DR3 ─────────────────────────────────────────────────────
+    print("\n━━━ Querying Gaia DR3 ━━━")
+    tab_gaia = query_gaia_dr3(ra_center, dec_center, radius_deg)
+    gaia_ra  = np.array(tab_gaia[gaia_ra_col],  dtype=float)
+    gaia_dec = np.array(tab_gaia[gaia_dec_col], dtype=float)
+
+    # ── 3. Stage 1 — initial cross-match ─────────────────────────────────────
+    print("\n━━━ Stage 1 — initial cross-match ━━━")
+    idx1, sep1, dra1, ddec1, good1 = cross_match(
+        vista_ra, vista_dec, gaia_ra, gaia_dec, max_sep_arcsec)
+
+    dra1_med, dra1_std, ddec1_med, ddec1_std = offset_stats(
+        dra1, ddec1, good1, label="Stage 1")
+
+    # ── 4. Stage 2 — corrected cross-match ───────────────────────────────────
+    print("\n━━━ Stage 2 — corrected cross-match ━━━")
+    vista_ra_s1  = vista_ra  + dra1_med  / 3600.0
+    vista_dec_s1 = vista_dec + ddec1_med / 3600.0
+
+    idx2, sep2, dra2, ddec2, good2 = cross_match(
+        vista_ra_s1, vista_dec_s1, gaia_ra, gaia_dec, max_sep_arcsec)
+
+    dra2_med, dra2_std, ddec2_med, ddec2_std = offset_stats(
+        dra2, ddec2, good2, label="Stage 2 (stage-1 corrected)")
+
+    # ── 5. Reliable radius from histogram ─────────────────────────────────────
+    print("\n━━━ Stage 2b — reliable radius from histogram ━━━")
+    r_reliable, hist_counts, hist_edges, hist_centers = find_reliable_radius(
+        sep2[good2], nbins=hist_nbins)
+    print(f"  Reliable association radius: {r_reliable:.3f} arcsec  "
+          f"(from {good2.sum():,} matches, "
+          f"histogram valley / fallback criterion)")
+
+    # ── 6. Stage 3 — final offsets on original coordinates ───────────────────
+    print("\n━━━ Stage 3 — final offsets (original VISTA, reliable radius) ━━━")
+    idx3, sep3, dra3, ddec3, good3 = cross_match(
+        vista_ra, vista_dec, gaia_ra, gaia_dec, r_reliable)
+
+    dra3_med, dra3_std, ddec3_med, ddec3_std = offset_stats(
+        dra3, ddec3, good3, label="Stage 3 — FINAL")
+
+    print(f"\n  ══ FINAL CORRECTIONS ══")
+    print(f"  ΔRA  = {dra3_med:+.5f} ± {dra3_std:.5f}  arcsec")
+    print(f"  ΔDec = {ddec3_med:+.5f} ± {ddec3_std:.5f}  arcsec")
+    print(f"  (N reliable matches = {good3.sum():,} / {len(tab_vista):,} VISTA sources)")
+
+    # ── 7. Apply final offsets ────────────────────────────────────────────────
+    vista_ra_corr  = vista_ra  + dra3_med  / 3600.0
+    vista_dec_corr = vista_dec + ddec3_med / 3600.0
+
+    tab_vista["RA_CORR"] = vista_ra_corr
+    tab_vista["DE_CORR"] = vista_dec_corr
+    tab_vista["RA_CORR"].description = (
+        "VISTA RA corrected to Gaia DR3 frame  [deg J2000]")
+    tab_vista["DE_CORR"].description = (
+        "VISTA Dec corrected to Gaia DR3 frame [deg J2000]")
+
+    # ── 8. Write output table ─────────────────────────────────────────────────
+    print(f"\n━━━ Writing output table ━━━")
+    aio.write(tab_vista, output_file, overwrite=True)
+    print(f"  → {output_file}  ({len(tab_vista):,} rows)")
+
+    # ── 9. Diagnostic figure ──────────────────────────────────────────────────
+    print("\n━━━ Producing diagnostic figure ━━━")
+    fig = make_diagnostic_figure(
+        sep1, dra1, ddec1, good1, max_sep_arcsec,
+        dra1_med, dra1_std, ddec1_med, ddec1_std,
+        sep2, dra2, ddec2, good2, r_reliable,
+        dra2_med, dra2_std, ddec2_med, ddec2_std,
+        sep3, dra3, ddec3, good3,
+        dra3_med, dra3_std, ddec3_med, ddec3_std,
+        output_path=plot_file,
+    )
+
+    print("\n✓ Pipeline complete.")
+    return {
+        "table":             tab_vista,
+        "dra_final_arcsec":  dra3_med,
+        "dra_final_std":     dra3_std,
+        "ddec_final_arcsec": ddec3_med,
+        "ddec_final_std":    ddec3_std,
+        "r_reliable_arcsec": r_reliable,
+        "figure":            fig,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Command-line interface
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--vista",    required=True,
+                   help="Path to the VISTA catalog (FITS or ASCII).")
+    p.add_argument("--ra",       required=True, type=float,
+                   help="Field centre RA (deg, J2000).")
+    p.add_argument("--dec",      required=True, type=float,
+                   help="Field centre Dec (deg, J2000).")
+    p.add_argument("--radius",   required=True, type=float,
+                   help="Cone radius for source selection (deg).")
+    p.add_argument("--max_sep",  default=3.0, type=float,
+                   help="Initial cross-match radius (arcsec). [default: 3.0]")
+    p.add_argument("--ra_col",   default="RA_VISTA",
+                   help="VISTA RA column name. [default: RA_VISTA]")
+    p.add_argument("--dec_col",  default="DE_VISTA",
+                   help="VISTA Dec column name. [default: DE_VISTA]")
+    p.add_argument("--parse_coords", action="store_true",
+                   help="Parse coordinates from source Name column (src_coo).")
+    p.add_argument("--name_col", default="Name",
+                   help="Source name column (used with --parse_coords). "
+                        "[default: Name]")
+    p.add_argument("--out",      default="vista_corrected.dat",
+                   help="Output catalog filename. [default: vista_corrected.dat]")
+    p.add_argument("--plot",     default="vista_gaia_diagnostic.pdf",
+                   help="Output plot filename. [default: vista_gaia_diagnostic.pdf]")
+    p.add_argument("--hist_nbins", default=100, type=int,
+                   help="Histogram bins for radius refinement. [default: 100]")
+    return p
+
+
+def test_gaia_connection(ra: float = 160.96, dec: float = -59.535,
+                          r_deg: float = 0.01) -> None:
+    """
+    Quick sanity-check: query a tiny patch and report how many sources
+    came back.  Call this in a notebook cell before run_pipeline() to
+    verify that the ESA TAP service is reachable and that DR3 is selected.
+
+    Example
+    -------
+        from vista_gaia_astrocorr import test_gaia_connection
+        test_gaia_connection()
+    """
+    print("Testing Gaia DR3 connection …")
+    try:
+        tab = query_gaia_dr3(ra, dec, r_deg)
+        print(f"✓  Connection OK — {len(tab)} sources in a {r_deg:.3f}-deg cone.")
+        print(f"   Columns: {tab.colnames}")
+    except Exception as e:
+        print(f"✗  Connection FAILED:\n   {e}")
+        print("\nTroubleshooting hints:")
+        print("  1. In Colab run:  !pip install astroquery --upgrade -q")
+        print("  2. Check the ESA Gaia archive status: https://gea.esac.esa.int/archive/")
+        print("  3. If behind a proxy, set:  Gaia.USE_NAMES_OVER_IDS = True")
+
+
+if __name__ == "__main__":
+    args = _build_parser().parse_args()
+    run_pipeline(
+        vista_file     = args.vista,
+        ra_center      = args.ra,
+        dec_center     = args.dec,
+        radius_deg     = args.radius,
+        max_sep_arcsec = args.max_sep,
+        ra_col         = args.ra_col,
+        dec_col        = args.dec_col,
+        parse_coords   = args.parse_coords,
+        name_col       = args.name_col,
+        output_file    = args.out,
+        plot_file      = args.plot,
+        hist_nbins     = args.hist_nbins,
+    )
