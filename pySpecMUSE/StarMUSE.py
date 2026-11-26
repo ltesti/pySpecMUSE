@@ -1,10 +1,31 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+#
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# This file is part of pySpecMUSE.
+# Copyright (C) 2023-2026 the pySpecMUSE authors (see README)
+#
+# pySpecMUSE is free software: you can redistribute it and/or modify it under
+# the terms of the GNU Lesser General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option) any
+# later version.
+#
+# pySpecMUSE is distributed in the hope that it will be useful, but WITHOUT ANY
+# WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+# A PARTICULAR PURPOSE. See the GNU Lesser General Public License for more
+# details.
+#
+# You should have received a copy of the GNU Lesser General Public License
+# along with pySpecMUSE (files COPYING.LESSER and COPYING). If not, see
+# <https://www.gnu.org/licenses/>.
 
 #import numpy as np
 #import matplotlib.pyplot as plt
 #from astropy.visualization import simple_norm
 #from photutils.aperture import CircularAperture
+
+from astropy.coordinates import SkyCoord
 
 from .utils import running_median_spec
 from .lines import line_integral, known_lines, lineplot
@@ -24,6 +45,17 @@ def apc_calc_single_star(args):
 
     med_mean_std = running_median_spec(args[0], (args[1])['hw_box'], sclip = sclip, maxiter=(args[1])['maxiter'])
     return med_mean_std
+
+
+def celestial_coord(coo):
+    """Return the celestial SkyCoord of a position
+
+    The positions computed with the 3D WCS of the cube (pixel_to_world) are lists
+    [SkyCoord, SpectralCoord]: in that case only the SkyCoord is returned.
+    """
+    if isinstance(coo, (list, tuple)):
+        coo = next(c for c in coo if isinstance(c, SkyCoord))
+    return coo
 
 
 class StarMUSE(object):
@@ -55,7 +87,11 @@ class StarMUSE(object):
             self.x_centroid = self.starpars['x_centroid']
             self.y_centroid = self.starpars['y_centroid']
             self.daofind_mag = self.starpars['mag']
-            self.skycoo = self.starpars['skycoo']
+            # original coordinates (celestial part only) from the cube WCS or the input file
+            self.skycoo_original = celestial_coord(self.starpars['skycoo'])
+            # astrometrically corrected coordinates (set by CubeMUSE.correct_astrometry)
+            self.skycoo_corrected = None
+            # self.skycoo (property) returns skycoo_corrected if available, else skycoo_original
 
         except KeyError:
             raise ValueError("Cannot initiate analysis without default values for pointing_code, datadir, and default_names switch\n {}".format(self.starpars))
@@ -87,6 +123,26 @@ class StarMUSE(object):
         # line measurements
         self.has_lines = False
         self.lines = {}
+
+    @property
+    def skycoo(self):
+        """Best available coordinates of the star (read only)
+
+        skycoo_corrected after the astrometric correction (CubeMUSE.correct_astrometry),
+        skycoo_original otherwise.
+        """
+        if self.skycoo_corrected is not None:
+            return self.skycoo_corrected
+        return self.skycoo_original
+
+    def __setstate__(self, state):
+        # objects pickled before skycoo_original was introduced stored the original
+        # coordinates in 'skycoo' (possibly as a [SkyCoord, SpectralCoord] list)
+        if 'skycoo' in state:
+            old = state.pop('skycoo')
+            state.setdefault('skycoo_original', celestial_coord(old))
+        state.setdefault('skycoo_corrected', None)
+        self.__dict__.update(state)
 
     def plot_star_summary(self, images={'image_V': None, 'image_I': None}, figure_file=None):
         #

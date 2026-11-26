@@ -4,3 +4,26 @@ The development of this software was partially supported by the
 European Union’s Horizon 2020 research and innovation programme through
 the European Research Council (ERC) ERC Synergy Grant ECOGAL (grant
 855130).
+
+Installation
+------------
+From a clone of the repository (pip installs any missing dependencies):
+
+    pip install .            # regular install
+    pip install -e .         # editable install, for development
+
+or directly from GitHub:
+
+    pip install git+https://github.com/ltesti/pySpecMUSE.git
+
+Optional extras for running the example notebooks:
+
+    pip install ".[notebooks]"
+
+License
+-------
+pySpecMUSE is free software: you can redistribute it and/or modify it under
+the terms of the GNU Lesser General Public License (LGPL) as published by the
+Free Software Foundation, either version 3 of the License, or (at your option)
+any later version. See COPYING.LESSER for the LGPLv3 terms and COPYING for
+the GNU General Public License version 3, which the LGPLv3 supplements.

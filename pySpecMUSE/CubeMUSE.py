@@ -1,5 +1,24 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+#
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# This file is part of pySpecMUSE.
+# Copyright (C) 2023-2026 the pySpecMUSE authors (see README)
+#
+# pySpecMUSE is free software: you can redistribute it and/or modify it under
+# the terms of the GNU Lesser General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option) any
+# later version.
+#
+# pySpecMUSE is distributed in the hope that it will be useful, but WITHOUT ANY
+# WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+# A PARTICULAR PURPOSE. See the GNU Lesser General Public License for more
+# details.
+#
+# You should have received a copy of the GNU Lesser General Public License
+# along with pySpecMUSE (files COPYING.LESSER and COPYING). If not, see
+# <https://www.gnu.org/licenses/>.
 
 import numpy as np
 import multiprocessing as mp
@@ -13,6 +32,10 @@ from .myphotutils import get_centroids, get_stars_for_apc, runphot_ima_aps, apc_
 from .apc_plots import plot_curve_of_growth_iv, plot_apc
 from .StarMUSE import StarMUSE, apc_calc_single_star
 from .lines import known_lines
+from .vista_gaia_astrocorr import (RA_CORR_COL, DE_CORR_COL, query_gaia, gaia_table_name,
+                                   cross_match, cross_match_in_box, offset_stats,
+                                   pair_offsets, apply_offsets,
+                                   find_reliable_radius, make_diagnostic_figure)
 
 
 class CubeMUSE(object):
@@ -85,11 +108,47 @@ class CubeMUSE(object):
             self.has_centroids = False
             self.has_apc_stars = False
             self.has_apc_values = False
+            self.has_astrometry = False
 
             self.set_starlis()
 
         except KeyError:
             raise ValueError("Cannot initiate analysis without default values for pointing_code, datadir, and default_names switch\n {}".format(self.params))
+
+    @property
+    def wcs(self):
+        """Best available world coordinate system of the cube (read only)
+
+        wcs_corrected after the astrometric correction (correct_astrometry),
+        wcs_original otherwise.
+        """
+        if self.wcs_corrected is not None:
+            return self.wcs_corrected
+        return self.wcs_original
+
+    def __setstate__(self, state):
+        # objects pickled before wcs_original was introduced: rebuild it from the header
+        state.pop('wcs', None)
+        if 'wcs_original' not in state and 'cube_header' in state:
+            state['wcs_original'] = WCS(state['cube_header'])
+        state.setdefault('wcs_corrected', None)
+        self.__dict__.update(state)
+
+    def _shifted_wcs(self, dra_arcsec, ddec_arcsec):
+        """Copy of wcs_original with the celestial reference point (CRVAL) shifted by the
+        tangent-plane offsets dRA = dalpha*cos(Dec), dDec [arcsec], as applied to the
+        stellar coordinates by correct_astrometry (SkyCoord.spherical_offsets_by)
+        """
+        import astropy.units as u
+        new = self.wcs_original.deepcopy()
+        lng, lat = new.wcs.lng, new.wcs.lat
+        ref = SkyCoord(new.wcs.crval[lng] * u.deg, new.wcs.crval[lat] * u.deg)
+        ref = ref.spherical_offsets_by(dra_arcsec * u.arcsec, ddec_arcsec * u.arcsec)
+        crval = new.wcs.crval.copy()
+        crval[lng], crval[lat] = ref.ra.deg, ref.dec.deg
+        new.wcs.crval = crval
+        new.wcs.set()
+        return new
 
     def set_parameters(self):
         """Function to set/read the optional parameters
@@ -137,6 +196,11 @@ class CubeMUSE(object):
         self.cube_data = hdul['DATA'].data
         self.cube_header = hdul['DATA'].header
         hdul.close()
+        # world coordinate system of the cube as delivered by the MUSE pipeline;
+        # wcs_corrected is set by correct_astrometry, self.wcs (property) returns
+        # wcs_corrected if available, else wcs_original
+        self.wcs_original = WCS(self.cube_header)
+        self.wcs_corrected = None
         # Setting the wavelength vector
         # new.header
         self.cube_cd11 = new.header['CD1_1']
@@ -175,7 +239,7 @@ class CubeMUSE(object):
         if not self.has_centroids:
             self.set_centroids()
         #
-        mywcs = WCS(self.cube_header)
+        mywcs = self.wcs_original
         #
         self.stars = []
         istar = 0
@@ -219,6 +283,336 @@ class CubeMUSE(object):
             self.stars_from_file = False
         #
         self.has_centroids =True
+
+    def correct_astrometry(self, reference=None, vista_table=None, ra_col=None, dec_col=None,
+                           gaia_release='DR3', gaia_radius_factor=1.5, gaia_catalog=None,
+                           max_sep_arcsec=5.0, hist_nbins=30, reliable_radius=None,
+                           offset_range=None, magsat=None,
+                           discard_faint=True, faint_fraction=0.2,
+                           doplo=True, plotfile='f_astrometry.pdf', verbose=True):
+        """Correct the stellar coordinates to the Gaia frame (or to a Gaia-registered VISTA catalog)
+
+        The reference catalog is either:
+
+            'gaia'  - Gaia sources queried from the ESA Gaia archive (astroquery), in a cone
+                      centred on the mean position of the stars in the cube and with radius
+                      gaia_radius_factor times the largest distance of any star from it
+                      (default release DR3, selectable with gaia_release)
+            'vista' - a VISTA catalog on disk, as produced by vista_gaia_astrocorr.py
+                      (requires vista_table)
+
+        The stars in the cube are cross-matched with the reference catalog and the RA/Dec
+        offset to be applied to the star.skycoo_original coordinates is derived with a three-stage
+        procedure (the same as in vista_gaia_astrocorr.py):
+
+            Stage 1 - nearest-neighbour match within max_sep_arcsec (optionally restricted
+                      to the offset box offset_range), median offsets
+            Stage 2 - re-match after applying the Stage-1 offsets; the separation
+                      histogram is used to find a "reliable" association radius
+            Stage 3 - final median offsets measured on the original coordinates, using
+                      only the Stage-2 pairs closer than the reliable radius (the pairs
+                      are selected after the Stage-1 correction, so that true matches are
+                      not lost when the offset is larger than the reliable radius)
+
+        The corrected coordinates (ICRS) are stored in star.skycoo_corrected for every
+        star, and star.skycoo then returns them instead of star.skycoo_original; the
+        corrected world coordinate system of the cube is stored in self.wcs_corrected,
+        and self.wcs then returns it instead of self.wcs_original; the offsets and match
+        details are stored in self.astrometry.
+        Offsets are tangent-plane offsets in arcsec: dRA = dalpha*cos(Dec) (positive towards
+        East) and dDec (positive towards North), reference minus MUSE, applied with
+        SkyCoord.spherical_offsets_by.
+        Gaia positions are used at the Gaia reference epoch (J2016.0 for DR3), without
+        propagating them with the proper motions to the epoch of the MUSE observations.
+
+        :param reference: (string) 'gaia' or 'vista'. If None (default): 'vista' when
+                          vista_table is given, 'gaia' otherwise
+        :param vista_table: (string) name of the table written by vista_gaia_astrocorr.py
+                            (ASCII, or FITS if the extension is .fits/.fit/.gz); required
+                            for reference='vista'
+        :param ra_col: (string) column with the reference RA [deg]
+                       (default: 'RA_CORR' for VISTA, 'ra' for Gaia)
+        :param dec_col: (string) column with the reference Dec [deg]
+                        (default: 'DE_CORR' for VISTA, 'dec' for Gaia)
+        :param gaia_release: (string) Gaia data release to query: 'DR3' (default), 'EDR3',
+                             'DR2', ... or a full archive table name (e.g. 'gaiadr3.gaia_source')
+        :param gaia_radius_factor: (float) radius of the Gaia query in units of the largest
+                                   distance of any star from the mean position (default 1.5)
+        :param gaia_catalog: (astropy Table) optional Gaia catalog already retrieved, e.g.
+                             self.astrometry['ref_table'] from a previous run: if given, the
+                             archive is not queried again
+        :param max_sep_arcsec: (float) maximum separation [arcsec] for a valid match
+        :param hist_nbins: (int) number of bins of the separation histogram used to find
+                           the reliable radius (fewer than in the script, since a MUSE
+                           field contains far fewer sources)
+        :param reliable_radius: (float) if set [arcsec], skip the histogram analysis and
+                                use this value as the reliable association radius
+        :param offset_range: (tuple) optional ((dra_min, dra_max), (ddec_min, ddec_max)) in
+                             arcsec (dRA = dalpha*cos(Dec), reference minus MUSE). If set, in
+                             Stage 1 each star is matched only to the reference sources whose
+                             offset falls inside this box (the one closest to the box centre
+                             is chosen), instead of the plain nearest neighbour. Use it in
+                             crowded fields when the offset is comparable to or larger than
+                             the typical distance between reference sources. The box must lie
+                             within max_sep_arcsec of the origin.
+        :param magsat: (float) stars brighter than this daofind magnitude (saturated), and
+                       stars with no measured magnitude, are not used to derive the offsets
+                       (the correction is still applied to them). Default: self.magsat, the same cutoff used by set_stars_for_apc
+                       (parameter 'saturation_magnitude')
+        :param discard_faint: (bool) if True (default), after the Stage-3 match discard the
+                              faintest matched stars before computing the final offsets
+        :param faint_fraction: (float) fraction of the Stage-3 matched stars to discard,
+                               the faintest by daofind magnitude (default 0.2, i.e. 20%)
+        :param doplo: (bool) if True produce the diagnostic plot (the last row shows the
+                      I band image in the original coordinate system with the Stage-1
+                      associations, and in the corrected coordinate system with the
+                      Stage-2 associations and, in green, those used for the final
+                      offsets)
+        :param plotfile: (string) name of the figure file (saved in figdir)
+        :param verbose: (bool) print the stage-by-stage results
+        :return: dictionary with the results (also stored in self.astrometry)
+        """
+        #
+        import contextlib
+        import io
+        from astropy.coordinates import ICRS
+        import astropy.units as u
+
+        if reference is None:
+            reference = 'vista' if vista_table is not None else 'gaia'
+        reference = reference.lower()
+        if reference not in ('gaia', 'vista'):
+            raise ValueError("reference must be 'gaia' or 'vista', not '{0}'".format(reference))
+        if reference == 'vista' and vista_table is None:
+            raise ValueError("reference='vista' requires the name of the VISTA table (vista_table)")
+
+        # original stellar coordinates in the cube (ICRS, as the Gaia/VISTA reference):
+        # always start from skycoo_original, so that repeated runs do not accumulate
+        # the corrections
+        muse_coo = [star.skycoo_original.transform_to(ICRS()) for star in self.stars]
+        muse_ra = np.array([c.ra.deg for c in muse_coo])
+        muse_dec = np.array([c.dec.deg for c in muse_coo])
+        # saturated stars (brighter than magsat, as in set_stars_for_apc) and stars with
+        # no measured magnitude are not used for the matching
+        magsat = self.magsat if magsat is None else magsat
+        muse_mag = np.array([star.daofind_mag for star in self.stars], dtype=float)
+        use = np.isfinite(muse_mag) & (muse_mag >= magsat)
+
+        # the helpers print their results: silence them unless verbose
+        quiet = contextlib.nullcontext() if verbose else contextlib.redirect_stdout(io.StringIO())
+        with quiet:
+            # reference catalog
+            query_center, query_radius, ref_table = None, None, None
+            if reference == 'vista':
+                ra_col = RA_CORR_COL if ra_col is None else ra_col
+                dec_col = DE_CORR_COL if dec_col is None else dec_col
+                ref_label = 'VISTA'
+                ref_title = 'VISTA ({0})'.format(os.path.basename(vista_table))
+                ext = os.path.splitext(vista_table)[1].lower()
+                if ext in ('.fits', '.fit', '.gz'):
+                    tab_ref = Table.read(vista_table, format='fits')
+                else:
+                    tab_ref = Table.read(vista_table, format='ascii')
+                catalog_name = vista_table
+            else:
+                ra_col = 'ra' if ra_col is None else ra_col
+                dec_col = 'dec' if dec_col is None else dec_col
+                ref_label = 'Gaia {0}'.format(gaia_release)
+                ref_title = ref_label
+                # cone centred on the mean position of the stars (mean of the unit vectors,
+                # equivalent to the mean RA/Dec for a MUSE field, but safe at RA=0/360)
+                stars_coo = SkyCoord(ra=muse_ra * u.deg, dec=muse_dec * u.deg, frame='icrs')
+                xyz = stars_coo.cartesian.xyz.mean(axis=1)
+                ctr = SkyCoord(x=xyz[0], y=xyz[1], z=xyz[2], representation_type='cartesian',
+                               frame='icrs')
+                ctr = SkyCoord(ra=ctr.spherical.lon, dec=ctr.spherical.lat, frame='icrs')
+                query_center = (float(ctr.ra.deg), float(ctr.dec.deg))
+                query_radius = float(gaia_radius_factor * ctr.separation(stars_coo).max().deg)
+                if gaia_catalog is None:
+                    tab_ref = query_gaia(query_center[0], query_center[1], query_radius,
+                                         release=gaia_release)
+                else:
+                    tab_ref = gaia_catalog
+                    print("  Using the Gaia catalog provided ({0} sources), no archive query".format(
+                        len(tab_ref)))
+                ref_table = tab_ref
+                catalog_name = 'Gaia {0} ({1})'.format(gaia_release, gaia_table_name(gaia_release))
+            for col in (ra_col, dec_col):
+                if col not in tab_ref.colnames:
+                    raise ValueError("Column '{0}' not found in the {1} catalog; available columns: {2}".format(
+                        col, ref_label, tab_ref.colnames))
+            ref_ra = np.array(tab_ref[ra_col], dtype=float)
+            ref_dec = np.array(tab_ref[dec_col], dtype=float)
+
+            print("\n━━━ Pointing {0}: astrometry of {1} stars vs {2} {3} sources ━━━".format(
+                self.pointing_code, len(muse_ra), len(ref_ra), ref_label))
+            print("  Excluded from the matching: {0} saturated stars (mag < {1}), "
+                  "{2} stars with no measured magnitude".format(
+                      int((muse_mag < magsat).sum()), magsat, int((~np.isfinite(muse_mag)).sum())))
+
+            # Stage 1 - initial cross-match (optionally restricted to an offset box)
+            if offset_range is None:
+                idx1, sep1, dra1, ddec1, good1 = cross_match(
+                    muse_ra, muse_dec, ref_ra, ref_dec, max_sep_arcsec)
+            else:
+                (dra_lo, dra_hi), (ddec_lo, ddec_hi) = offset_range
+                print("  Stage 1 restricted to dRA in [{0:+.2f}, {1:+.2f}], dDec in [{2:+.2f}, {3:+.2f}] arcsec".format(
+                    min(dra_lo, dra_hi), max(dra_lo, dra_hi), min(ddec_lo, ddec_hi), max(ddec_lo, ddec_hi)))
+                idx1, sep1, dra1, ddec1, good1 = cross_match_in_box(
+                    muse_ra, muse_dec, ref_ra, ref_dec, max_sep_arcsec,
+                    (dra_lo, dra_hi), (ddec_lo, ddec_hi))
+            good1 &= use
+            if good1.sum() == 0:
+                raise ValueError("No {0} counterpart within {1} arcsec{3} for any star in pointing {2}".format(
+                    ref_label, max_sep_arcsec, self.pointing_code,
+                    "" if offset_range is None else " and inside offset_range"))
+            dra1_med, dra1_std, ddec1_med, ddec1_std = offset_stats(dra1, ddec1, good1, label="Stage 1")
+
+            # Stage 2 - cross-match after the stage-1 correction
+            idx2, sep2, dra2, ddec2, good2 = cross_match(
+                *apply_offsets(muse_ra, muse_dec, dra1_med, ddec1_med),
+                ref_ra, ref_dec, max_sep_arcsec)
+            good2 &= use
+            if good2.sum() == 0:
+                raise ValueError("No {0} counterpart within {1} arcsec after the Stage-1 correction".format(
+                    ref_label, max_sep_arcsec))
+            dra2_med, dra2_std, ddec2_med, ddec2_std = offset_stats(
+                dra2, ddec2, good2, label="Stage 2 (stage-1 corrected)")
+
+            # Stage 2b - reliable radius
+            if reliable_radius is None:
+                r_reliable = find_reliable_radius(sep2[good2], nbins=hist_nbins, stop_at_empty=True)[0]
+                print("  Reliable association radius: {0:.3f} arcsec (from histogram)".format(r_reliable))
+            else:
+                r_reliable = float(reliable_radius)
+                print("  Reliable association radius: {0:.3f} arcsec (user supplied)".format(r_reliable))
+
+            # Stage 3 - final offsets on the original coordinates
+            idx3 = idx2
+            good3 = good2 & (sep2 <= r_reliable)
+            dra3, ddec3 = pair_offsets(muse_ra, muse_dec, ref_ra[idx3], ref_dec[idx3])
+            sep3 = SkyCoord(ra=muse_ra * u.deg, dec=muse_dec * u.deg).separation(
+                SkyCoord(ra=ref_ra[idx3] * u.deg, dec=ref_dec[idx3] * u.deg)).arcsec
+            if good3.sum() == 0:
+                raise ValueError("No matches within the reliable radius ({0:.3f} arcsec): "
+                                 "try setting reliable_radius or hist_nbins".format(r_reliable))
+            # discard the faintest matched stars before computing the final offsets
+            n_faint, mag_faint = 0, None
+            faint3 = np.zeros(len(muse_ra), dtype=bool)   # matched but discarded as faint
+            if discard_faint and faint_fraction > 0:
+                if not 0 < faint_fraction < 1:
+                    raise ValueError("faint_fraction must be between 0 and 1, not {0}".format(
+                        faint_fraction))
+                i_matched = np.where(good3)[0]
+                n_faint = int(round(faint_fraction * len(i_matched)))
+                if n_faint >= len(i_matched):
+                    n_faint = len(i_matched) - 1
+                if n_faint > 0:
+                    # faintest = largest magnitude; stable sort for reproducible ties
+                    i_faint = i_matched[np.argsort(muse_mag[i_matched], kind='stable')[-n_faint:]]
+                    mag_faint = float(muse_mag[i_faint].min())
+                    good3[i_faint] = False
+                    faint3[i_faint] = True
+                    print("  Discarded the {0} faintest of {1} matched stars ({2:.0f}%, "
+                          "mag >= {3:.2f})".format(n_faint, len(i_matched),
+                                                   100 * faint_fraction, mag_faint))
+            dra3_med, dra3_std, ddec3_med, ddec3_std = offset_stats(
+                dra3, ddec3, good3, label="Stage 3 - FINAL")
+            print("  FINAL: dRA = {0:+.4f} +/- {1:.4f} arcsec, dDec = {2:+.4f} +/- {3:.4f} arcsec "
+                  "(N = {4} / {5} usable stars)".format(dra3_med, dra3_std, ddec3_med, ddec3_std,
+                                                             good3.sum(), int(use.sum())))
+
+        # apply the correction to all the stars
+        corr_ra, corr_dec = apply_offsets(muse_ra, muse_dec, dra3_med, ddec3_med)
+        corr_coo = SkyCoord(ra=corr_ra * u.deg, dec=corr_dec * u.deg, frame='icrs')
+        for i, star in enumerate(self.stars):
+            star.skycoo_corrected = corr_coo[i]
+        # corrected WCS: same offsets applied to the celestial reference point
+        self.wcs_corrected = self._shifted_wcs(dra3_med, ddec3_med)
+
+        # diagnostic figure
+        fig = None
+        if doplo:
+            self.plotfile_astrometry = self.figdir + os.path.split(plotfile)[1]
+            # I band images (same spatial grid as the cube) with the associations:
+            #   left:  original WCS, Stage-1 pairs (catalog: red circles, MUSE: yellow +)
+            #   right: corrected WCS, Stage-2 pairs (red / yellow), the Stage-3 pairs
+            #          discarded because the MUSE star is too faint (yellow / yellow) and,
+            #          on top, the pairs used for the final offsets (green)
+            circ_r = 0.9       # radius of the catalog circles [arcsec]
+            r_lbl = "{0} source (r = {1:g}\")".format(ref_label, circ_r)
+            image_panels = [
+                {'image': self.data_i, 'wcs': self.wcs_original.celestial,
+                 'circle_radius_arcsec': circ_r,
+                 'title': "Original coordinate system",
+                 'layers': [
+                     {'ref_ra': ref_ra[idx1[good1]], 'ref_dec': ref_dec[idx1[good1]],
+                      'src_ra': muse_ra[good1], 'src_dec': muse_dec[good1],
+                      'ref_label': r_lbl + ", Stage 1 match",
+                      'src_label': "MUSE star, Stage 1 match"}]},
+                {'image': self.data_i, 'wcs': self.wcs_corrected.celestial,
+                 'circle_radius_arcsec': circ_r,
+                 'title': "Corrected coordinate system",
+                 'layers': [
+                     {'ref_ra': ref_ra[idx2[good2 & ~faint3]],
+                      'ref_dec': ref_dec[idx2[good2 & ~faint3]],
+                      'src_ra': corr_ra[good2 & ~faint3], 'src_dec': corr_dec[good2 & ~faint3],
+                      'ref_label': r_lbl + ", Stage 2 match",
+                      'src_label': "MUSE star, Stage 2 match"},
+                     {'ref_ra': ref_ra[idx2[faint3]], 'ref_dec': ref_dec[idx2[faint3]],
+                      'src_ra': corr_ra[faint3], 'src_dec': corr_dec[faint3],
+                      'ref_color': 'yellow', 'src_color': 'yellow',
+                      'ref_label': "{0} source, discarded (MUSE star too faint)".format(ref_label),
+                      'src_label': None},
+                     {'ref_ra': ref_ra[idx3[good3]], 'ref_dec': ref_dec[idx3[good3]],
+                      'src_ra': corr_ra[good3], 'src_dec': corr_dec[good3],
+                      'ref_color': 'limegreen', 'src_color': 'limegreen',
+                      'ref_label': "{0} source, used in final correction".format(ref_label),
+                      'src_label': "MUSE star, used in final correction"}]},
+            ]
+            fig = make_diagnostic_figure(
+                sep1, dra1, ddec1, good1, max_sep_arcsec,
+                dra1_med, dra1_std, ddec1_med, ddec1_std,
+                sep2, dra2, ddec2, good2, r_reliable,
+                dra2_med, dra2_std, ddec2_med, ddec2_std,
+                # row 3 separation panel: Stage-2 separations of the selected pairs
+                np.where(good3, sep2, np.inf), dra3, ddec3, good3,
+                dra3_med, dra3_std, ddec3_med, ddec3_std,
+                output_path=self.plotfile_astrometry,
+                title="Pointing {0}: MUSE → {1} astrometric correction".format(
+                    self.pointing_code, ref_title),
+                image_panels=image_panels)
+
+        self.astrometry = {
+            'reference': reference,     # 'gaia' or 'vista'
+            'catalog': catalog_name,    # VISTA file name or Gaia release/table
+            'gaia_release': gaia_release if reference == 'gaia' else None,
+            'query_center_deg': query_center,   # (RA, Dec) of the Gaia cone
+            'query_radius_deg': query_radius,   # radius of the Gaia cone
+            'ref_table': ref_table,     # Gaia catalog used (None for VISTA)
+            'dra_arcsec': dra3_med,     # dRA*cos(Dec)
+            'dra_std': dra3_std,
+            'ddec_arcsec': ddec3_med,
+            'ddec_std': ddec3_std,
+            'r_reliable_arcsec': r_reliable,
+            'offset_range': offset_range,
+            'magsat': magsat,
+            'faint_fraction': faint_fraction if discard_faint else 0.,
+            'n_discarded_faint': n_faint,      # faintest matched stars not used
+            'discarded_faint': faint3,         # True for the matched stars discarded as faint
+            'mag_discarded_faint': mag_faint,  # brightest magnitude among them
+            'used_for_matching': use,   # False for saturated stars and stars with no magnitude
+            'n_matched': int(good3.sum()),
+            'ref_idx': idx3,            # index of the closest reference source for each star
+            'ref_sep_arcsec': sep3,     # separation from it (original coordinates)
+            'ref_sep_corr_arcsec': sep2,  # separation after the Stage-1 correction
+            'matched': good3,           # True if used for the final offsets (within the
+                                        # reliable radius, not among the faintest discarded)
+            'figure': fig,
+        }
+        self.has_astrometry = True
+
+        return self.astrometry
 
     def set_stars_for_apc(self, mindist=10, magperc=20,
                           doplo=True, image=None, plotfile='f_stars_for_apc.pdf',
