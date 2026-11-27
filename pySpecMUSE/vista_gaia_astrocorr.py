@@ -686,33 +686,24 @@ def run_pipeline(
     """
     Run the full astrometric correction pipeline.
 
-    Parameters
-    ----------
-    vista_file      : Path to the VISTA catalog (FITS or ASCII).
-    ra_center       : Field centre RA  (deg, J2000).
-    dec_center      : Field centre Dec (deg, J2000).
-    radius_deg      : Cone radius for source selection (deg).
-    max_sep_arcsec  : Initial cross-match radius (arcsec).
-    ra_col / dec_col: Column names for VISTA RA/Dec.
-                      Ignored when parse_coords=True.
-    parse_coords    : If True, parse coordinates from *name_col* via src_coo().
-    name_col        : Source name column (used when parse_coords=True).
-    gaia_ra_col     : Gaia RA  column name (default "ra").
-    gaia_dec_col    : Gaia Dec column name (default "dec").
-    output_file     : Path for the output corrected catalog.
-    plot_file       : Path for the diagnostic figure (PDF/PNG).
-    hist_nbins      : Number of bins for the separation histogram.
-
-    Returns
-    -------
-    dict with keys:
-        "table"            : corrected VISTA astropy.Table
-        "dra_final_arcsec" : final ΔRA·cos(Dec) offset applied (arcsec)
-        "dra_final_std"    : its standard deviation (arcsec)
-        "ddec_final_arcsec": final ΔDec offset applied (arcsec)
-        "ddec_final_std"   : its standard deviation (arcsec)
-        "r_reliable_arcsec": reliable association radius (arcsec)
-        "figure"           : matplotlib Figure
+    :param vista_file: Path to the VISTA catalogue (FITS or ASCII).
+    :param ra_center: Field centre right ascension in degrees (J2000).
+    :param dec_center: Field centre declination in degrees (J2000).
+    :param radius_deg: Cone radius for source selection in degrees.
+    :param max_sep_arcsec: Initial cross-match radius in arcseconds.
+    :param ra_col: VISTA right ascension column, ignored when parsing names.
+    :param dec_col: VISTA declination column, ignored when parsing names.
+    :param parse_coords: Parse coordinates from the source name column.
+    :param name_col: Source name column used when parsing coordinates.
+    :param gaia_ra_col: Gaia right ascension column.
+    :param gaia_dec_col: Gaia declination column.
+    :param output_file: Path for the corrected catalogue.
+    :param plot_file: Path for the diagnostic figure (PDF or PNG).
+    :param hist_nbins: Number of bins in the separation histogram.
+    :return: Dictionary containing the corrected ``table``, final offsets
+        ``dra_final_arcsec`` and ``ddec_final_arcsec``, their standard deviations
+        ``dra_final_std`` and ``ddec_final_std``, the association radius
+        ``r_reliable_arcsec``, and the diagnostic ``figure``.
     """
 
     # ── 0. Load VISTA catalog ─────────────────────────────────────────────────

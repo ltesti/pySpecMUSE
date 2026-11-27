@@ -837,6 +837,16 @@ class CubeMUSE(object):
                 mystar.apc_std = result[2]
 
     def extract_spectra(self, radius, sky_radii, add_apc=True):
+        """Extract a sky-subtracted spectrum at every source position.
+
+        Store wavelength-by-source arrays on the cube and populate each
+        star's spectrum, sky and noise attributes.
+
+        :param radius: Sequence containing one extraction radius in pixels.
+        :param sky_radii: Inner and outer radii of the sky annulus in pixels.
+        :param add_apc: Apply the aperture correction computed by
+            :meth:`set_apc_values` and populate each star's corrected spectrum.
+        """
         #
         self.spec_radius = radius
         self.spec_sky_radii = sky_radii
@@ -879,6 +889,15 @@ class CubeMUSE(object):
             self.correct_spectra_apc()
 
     def compute_rms_spectra(self, hw_box_median=50, sclip_median=3, sclip_niter=5):
+        """Estimate noise from the extracted spectrum of each star.
+
+        Updates each star's ``rms_spectrum``. Called automatically by
+        :meth:`extract_spectra`.
+
+        :param hw_box_median: Half-width of the running window in spectral samples.
+        :param sclip_median: Sigma-clipping threshold.
+        :param sclip_niter: Maximum number of sigma-clipping iterations.
+        """
         #
         mydicargs = {'hw_box' : hw_box_median, 'sclip' : sclip_median, 'maxiter' : sclip_niter}
         if self.nproc:  # run with multiprocessing

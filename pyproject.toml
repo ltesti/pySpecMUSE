@@ -31,6 +31,7 @@ classifiers = [
 
 [project.optional-dependencies]
 notebooks = ["jupyter", "pandas"]
+docs = ["sphinx>=7.4"]
 
 [project.urls]
 Homepage = "https://github.com/ltesti/pySpecMUSE"

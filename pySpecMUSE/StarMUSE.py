@@ -59,21 +59,15 @@ def celestial_coord(coo):
 
 
 class StarMUSE(object):
+    """Store the position, photometry, and extracted spectrum for one source.
+
+    Instances are created by :class:`~pySpecMUSE.CubeMUSE.CubeMUSE` during
+    source detection or catalogue loading.
+
+    :param starpars: Mapping with ``star_id``, ``x_centroid``,
+        ``y_centroid``, ``mag``, and ``skycoo``. Centroids are in
+        image pixels, and ``skycoo`` contains the original celestial coordinates.
     """
-        The class stores the parameters for a star (id, position, spectrum, sky, etc...)
-        in the MUSE field
-
-        params:
-            position
-
-        Example:
-            starpars = {
-                'x_centroid' : posline['x_centroid'],
-                'y_centroid' : posline['y_centroid'],
-                'mag' : posline['mag'],
-                'skycoo' : self.wcs.pixel_to_world(posline['x_centroid'], posline['y_centroid'])
-            }
-        """
 
     def __init__(self, starpars):
         """
@@ -145,6 +139,12 @@ class StarMUSE(object):
         self.__dict__.update(state)
 
     def plot_star_summary(self, images={'image_V': None, 'image_I': None}, figure_file=None):
+        """Plot a summary of this source after spectrum extraction.
+
+        :param images: Optional mapping of ``image_V`` and ``image_I`` to
+            two-dimensional image arrays.
+        :param figure_file: Optional destination for the figure.
+        """
         #
         plot_star(self, images=images, figure_file=figure_file)
 
